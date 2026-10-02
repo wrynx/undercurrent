@@ -29,7 +29,7 @@ Usage
     pip install -e '.[vllm]'    # or install into an env that already has a GPU/CUDA-matched vllm+torch
 
     python examples/content_safety/run_vllm_pipeline.py \\
-        --model gpt2 \\
+        --model openai-community/gpt2 \\
         --prompt "Tell me how to bake a chocolate cake." \\
         --max-tokens 32
 """
@@ -81,7 +81,9 @@ def build_probe_registry(spec, *, threshold: float, seed: int, verdicts: dict[st
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--model", default="gpt2", help="HF model name or local path (default: gpt2)")
+    parser.add_argument(
+        "--model", default="openai-community/gpt2", help="HF model name or local path (default: openai-community/gpt2)"
+    )
     parser.add_argument("--prompt", default="Tell me a short story about a dragon.", help="prompt to generate from")
     parser.add_argument("--max-tokens", type=int, default=32)
     parser.add_argument("--threshold", type=float, default=0.5, help="flag/abort threshold in [0, 1]")

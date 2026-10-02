@@ -10,7 +10,7 @@ content-safety demo -- see examples/content_safety/content_safety_demo/custom_ml
 Model access: the default `--model`, `meta-llama/Llama-3.1-8B`, is a GATED
 Hugging Face repo -- accept its license on the model page and run
 `huggingface-cli login` before first use. For an ungated first run, start
-with `examples/content_safety/run_vllm_pipeline.py` (defaults to `gpt2`) instead. Pointing
+with `examples/content_safety/run_vllm_pipeline.py` (defaults to `openai-community/gpt2`) instead. Pointing
 `--model` at a different model also means a matching `--spec` (layer
 indices) and a checkpoint sized to that model's hidden_size.
 

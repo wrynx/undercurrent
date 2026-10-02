@@ -39,6 +39,7 @@ single sequential HF-style loop cannot demonstrate at all.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import threading
@@ -47,7 +48,7 @@ from typing import Any
 
 from ...core import RequestContext
 from ...errors import ProbingError
-from ...router import Router
+from ...router import Router, RouterError
 from ...spec import ActivationRecord, ExtractionPoint
 from .._optional import COMPATIBILITY_DOC, require_torch, require_vllm
 from ..base import EngineAdapter
@@ -82,7 +83,7 @@ class VLLMEngineAdapter(EngineAdapter):
 
     ```python
     adapter = VLLMEngineAdapter()
-    adapter.load_model("gpt2")
+    adapter.load_model("openai-community/gpt2")
     adapter.register_extraction(request_id, extraction_points)
     text = adapter.generate(request_id, prompt, {"max_tokens": 32}, router)
     adapter.unregister_extraction(request_id)
@@ -102,6 +103,11 @@ class VLLMEngineAdapter(EngineAdapter):
         self._tokenizer: Any = None
         self._pending_extraction_points: dict[str, list[ExtractionPoint]] = {}
         self._bound_router: Router | None = None
+        # Requests between router.register_request() and router.end_request(). Activations
+        # drained from the worker for any other request id are late arrivals of an ended
+        # (e.g. aborted) request and are dropped -- see _drain_pending_activations().
+        self._active_requests: set[str] = set()
+        self._active_lock = threading.Lock()
         self._model_name: str | None = None
 
     # -----------------------------------------------------------------
@@ -158,13 +164,21 @@ class VLLMEngineAdapter(EngineAdapter):
         self._engine = AsyncLLMEngine.from_engine_args(engine_args)
         self._model_name = model_name_or_path
 
-        # _check_executor_topology() below needs to make an RPC call, which needs a running
-        # loop to bridge onto (see _rpc()) -- must start this before that check, not after.
-        self._loop = asyncio.new_event_loop()
-        self._loop_thread = threading.Thread(target=self._loop.run_forever, name="undercurrent-vllm-loop", daemon=True)
-        self._loop_thread.start()
+        try:
+            # _check_executor_topology() below needs to make an RPC call, which needs a running
+            # loop to bridge onto (see _rpc()) -- must start this before that check, not after.
+            self._loop = asyncio.new_event_loop()
+            self._loop_thread = threading.Thread(
+                target=self._loop.run_forever, name="undercurrent-vllm-loop", daemon=True
+            )
+            self._loop_thread.start()
 
-        self._check_executor_topology(allow_unsupported_executor)
+            self._check_executor_topology(allow_unsupported_executor)
+        except BaseException:
+            # Don't leave a half-started engine behind: its EngineCore process keeps GPU
+            # memory, and garbage-collecting it later can block (see shutdown()).
+            self.shutdown()
+            raise
 
     def register_extraction(self, request_id: str, extraction_points: list[ExtractionPoint]) -> None:
         if request_id in self._pending_extraction_points:
@@ -201,6 +215,8 @@ class VLLMEngineAdapter(EngineAdapter):
             extraction_point_config=None,
         )
         router.register_request(request_id, extraction_points, request_ctx)
+        with self._active_lock:
+            self._active_requests.add(request_id)
         # Pre-serialize to plain dicts before crossing the RPC boundary: ExtractionPoint is a
         # plain @dataclass, not a msgspec.Struct, so vLLM's typed-arg RPC decoder can't
         # reconstruct one from its encoded form and hands the worker a raw dict instead
@@ -218,6 +234,8 @@ class VLLMEngineAdapter(EngineAdapter):
         try:
             return future.result()
         finally:
+            with self._active_lock:
+                self._active_requests.discard(request_id)
             # Finalizes every probe for this request (on_end) and tears down router-side
             # state. Safe even if generation was aborted mid-stream -- see Router.end_request's
             # own docstring on why an aborted request's trajectory probe still gets a clean finish.
@@ -228,16 +246,39 @@ class VLLMEngineAdapter(EngineAdapter):
         if self._engine is not None:
             self._rpc("unregister_extraction", args=(request_id,))
 
-    def shutdown(self) -> None:
-        """Stop the background event-loop thread.
+    def shutdown(self, timeout: float | None = 30.0) -> None:
+        """Shut down the vLLM engine and the background event-loop thread.
 
         Not part of the ``EngineAdapter`` contract. Call it when tearing the
-        adapter down, so the thread doesn't leak.
+        adapter down; it's safe to call more than once, and the adapter can't
+        be used afterwards.
+
+        The engine is shut down explicitly, first: vLLM's `AsyncLLM` runs its
+        `EngineCore` in a subprocess and talks to it over ZeroMQ. Leaving that
+        to garbage collection keeps the subprocess (and its GPU memory) alive,
+        and collecting the client later can block forever in ZeroMQ's
+        `Context.term()` while its sockets are still open. `timeout` (seconds)
+        bounds the engine shutdown.
         """
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-        if self._loop_thread is not None:
-            self._loop_thread.join(timeout=10)
+        engine, self._engine = self._engine, None
+        if engine is not None:
+            try:
+                if "timeout" in inspect.signature(engine.shutdown).parameters:
+                    engine.shutdown(timeout=timeout)
+                else:  # older engines' shutdown() takes no timeout
+                    engine.shutdown()
+            except Exception:
+                logger.warning("VLLMEngineAdapter.shutdown(): engine shutdown failed", exc_info=True)
+        loop, thread = self._loop, self._loop_thread
+        self._loop, self._loop_thread = None, None
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(loop.stop)
+        if thread is not None:
+            thread.join(timeout=10)
+        if loop is not None and not loop.is_running() and not loop.is_closed():
+            loop.close()
+        self._bound_router = None
+        self._pending_extraction_points.clear()
 
     # -----------------------------------------------------------------
     # Internals
@@ -598,6 +639,16 @@ class VLLMEngineAdapter(EngineAdapter):
                 raw["is_generated"],
             ),
         )
+        # The worker's buffer is shared by every in-flight request, so this drain can see
+        # records of requests that already ended (an aborted request's last decode step,
+        # or one that finished while another request was mid-drain). Routing those would
+        # raise RouterError and fail THIS request; they're late, so drop them.
+        with self._active_lock:
+            active = set(self._active_requests)
+        late = [raw for raw in pending if raw["request_id"] not in active]
+        if late:
+            logger.debug("undercurrent.adapters.vllm: dropping %d activation(s) of ended requests", len(late))
+            pending = [raw for raw in pending if raw["request_id"] in active]
         if not pending:
             return
         pending = sorted(
@@ -612,10 +663,17 @@ class VLLMEngineAdapter(EngineAdapter):
                 layer=raw["layer"],
                 token_pos=raw["token_pos"],
                 tensor_type=raw["tensor_type"],
-                tensor=raw["tensor"],
+                tensor=_as_float32_tensor(raw["tensor"]),
                 is_generated=raw["is_generated"],
             )
-            signal = await loop.run_in_executor(None, router.route, record)
+            try:
+                signal = await loop.run_in_executor(None, router.route, record)
+            except RouterError:
+                with self._active_lock:
+                    still_active = record.request_id in self._active_requests
+                if still_active:
+                    raise
+                continue  # the request ended while we were draining: a late arrival
             if signal is not None and signal.action.value == "abort":
                 abort_fn = getattr(self._engine, "abort", None)
                 if abort_fn is None:
@@ -627,3 +685,18 @@ class VLLMEngineAdapter(EngineAdapter):
                 result = abort_fn(record.request_id)
                 if asyncio.iscoroutine(result):
                     await result
+
+
+def _as_float32_tensor(value: Any) -> Any:
+    """A record tensor as a CPU float32 `torch.Tensor`.
+
+    Records that cross the RPC boundary from the worker process arrive as plain
+    nested lists (see worker_extension.py's `pop_pending_activations`). Probes
+    get the same type on every path -- in-process vLLM and the HF backend hand
+    them a `torch.Tensor` -- so rebuild one here.
+    """
+    import torch
+
+    if isinstance(value, torch.Tensor):
+        return value
+    return torch.tensor(value, dtype=torch.float32)

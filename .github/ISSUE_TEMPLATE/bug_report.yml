@@ -42,7 +42,7 @@ body:
     attributes:
       label: Minimal reproduction (code)
       description: |
-        The smallest Python script that reproduces the problem. Prefer a small public model (e.g. `gpt2`) if the bug reproduces with it.
+        The smallest Python script that reproduces the problem. Prefer a small public model (e.g. `openai-community/gpt2`) if the bug reproduces with it.
         Remove secrets, private model names and prompt data you cannot share.
       render: python
     validations:

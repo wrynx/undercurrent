@@ -4,7 +4,7 @@ Load a model, attach probes from a spec, generate, read the results::
 
     from undercurrent import ProbedModel
 
-    with ProbedModel.from_pretrained("gpt2", spec="probes.yaml") as m:
+    with ProbedModel.from_pretrained("openai-community/gpt2", spec="probes.yaml") as m:
         out = m.generate("Hello", max_new_tokens=32)
         print(out.text, out.aborted, out.probe_results)
 
@@ -567,7 +567,7 @@ class ProbedModel:
     ```python
     from undercurrent import ProbedModel
 
-    with ProbedModel.from_pretrained("gpt2", spec="probes.yaml") as model:
+    with ProbedModel.from_pretrained("openai-community/gpt2", spec="probes.yaml") as model:
         out = model.generate("The weather today is", max_new_tokens=20)
     print(out.text, out.probe_results)
     ```

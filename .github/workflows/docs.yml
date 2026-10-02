@@ -81,7 +81,7 @@ jobs:
 
       - name: Run the python blocks
         env:
-          # The pages download gpt2 from the Hub; network tests are opt-in.
+          # The pages download openai-community/gpt2 from the Hub; network tests are opt-in.
           RUN_NETWORK_TESTS: "1"
         run: pytest tests/docs -m "slow" -v --durations=10
 

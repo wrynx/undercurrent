@@ -307,7 +307,7 @@ def test_invalid_max_concurrency(fake, bad):
 
 def test_hf_backend_rejects_concurrency_above_one():
     with pytest.raises(ProbedModelConfigError, match="'hf' backend"):
-        ProbedModel.from_pretrained("gpt2", max_concurrency=2)
+        ProbedModel.from_pretrained("openai-community/gpt2", max_concurrency=2)
 
 
 def test_one_failure_raises_for_the_whole_call(make_model, fake):
@@ -462,7 +462,7 @@ def test_import_model_does_not_import_vllm():
 def test_real_vllm_smoke():
     pytest.importorskip("vllm", reason="needs a real vLLM install")
     with ProbedModel.from_pretrained(
-        "gpt2",
+        "openai-community/gpt2",
         backend="vllm",
         spec=SPEC,
         probes=PROBES,

@@ -196,7 +196,7 @@ a `KeyError`, `MissingDependencyError` an `ImportError`, ...), so existing
 from undercurrent import ProbedModel, ProbingError
 
 try:
-    model = ProbedModel.from_pretrained("gpt2", spec="probes.yaml")
+    model = ProbedModel.from_pretrained("openai-community/gpt2", spec="probes.yaml")
 except ProbingError as exc:
     print(f"configuration problem: {exc}")
 ```

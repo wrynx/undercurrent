@@ -30,7 +30,7 @@ so nothing is downloaded except the model:
 
 ```bash
 pip install undercurrent        # or, from a clone: pip install -e .
-python examples/train_probe/train_probe.py --model gpt2 --dataset toy --layer 6 --epochs 20
+python examples/train_probe/train_probe.py --model openai-community/gpt2 --dataset toy --layer 6 --epochs 20
 python examples/train_probe/use_probe.py outputs/train_probe
 ```
 
@@ -93,7 +93,7 @@ their biases; see the
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--model` | `gpt2` | Hugging Face model id or local path |
+| `--model` | `openai-community/gpt2` | Hugging Face model id or local path |
 | `--dataset` | `toy` | `toy` or `civil_comments` |
 | `--layer` | (required) | Layer index to read (0-based) |
 | `--position` | `prompt[-1]` | Spec position; the default is the last prompt token |

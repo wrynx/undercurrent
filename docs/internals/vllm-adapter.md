@@ -107,7 +107,7 @@ from undercurrent.adapters.vllm import VLLMEngineAdapter
 from undercurrent.router import Router
 
 adapter = VLLMEngineAdapter()
-adapter.load_model("gpt2", gpu_memory_utilization=0.3, max_model_len=64, enforce_eager=True)
+adapter.load_model("openai-community/gpt2", gpu_memory_utilization=0.3, max_model_len=64, enforce_eager=True)
 
 router = Router(probe_registry=probe_registry)
 adapter.register_extraction(request_id, extraction_points)

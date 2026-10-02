@@ -277,7 +277,7 @@ def test_vllm_backend_without_gpu_fails_fast(harness, monkeypatch, tmp_path, cap
 @pytest.mark.skipif(torch.cuda.is_available(), reason="on a GPU host this would start a real vLLM benchmark")
 def test_vllm_cli_on_this_host_exits_with_one_line(tmp_path):
     proc = subprocess.run(
-        [sys.executable, str(RUN_PY), "--backend", "vllm", "--model", "gpt2", "--out", str(tmp_path)],
+        [sys.executable, str(RUN_PY), "--backend", "vllm", "--model", "openai-community/gpt2", "--out", str(tmp_path)],
         capture_output=True,
         text=True,
         timeout=300,

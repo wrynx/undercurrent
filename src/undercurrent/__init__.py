@@ -10,7 +10,7 @@ See the undercurrent before it surfaces. Load a model, attach probes, generate::
 
     spec = {"extraction_points": [{"name": "last", "layers": 0, "tensor_type": "residual_stream",
             "position": "prompt[-1]", "probe_type": "norm", "probe_kind": "single_shot"}]}
-    with ProbedModel.from_pretrained("gpt2", spec=spec) as model:
+    with ProbedModel.from_pretrained("openai-community/gpt2", spec=spec) as model:
         out = model.generate("The weather today is", max_new_tokens=20)
     print(out.text, out.probe_results["last"].verdict)
 

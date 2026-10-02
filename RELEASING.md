@@ -111,7 +111,7 @@ pip install -e ".[dev]"               # not [vllm]: vLLM is already there
 scripts/gpu_check.sh
 ```
 
-The script installs nothing. It downloads `gpt2` from the Hugging Face Hub,
+The script installs nothing. It downloads `openai-community/gpt2` (GPT-2) from the Hugging Face Hub,
 and it fails if CUDA or vLLM isn't usable, if the vLLM is outside the
 supported range, if a test fails, or if any GPU test was skipped. Add
 `--live-llama` (with `UNDERCURRENT_LIVE_LLAMA_MODEL` set) to also run the live
@@ -201,7 +201,7 @@ extraction_points:
 """)
 router = Router(probe_registry={"linear_probe": ProbeFactory(MLPClassifierProbe, {"num_classes": 2})})
 adapter = HFEngineAdapter()
-adapter.load_model("gpt2")
+adapter.load_model("openai-community/gpt2")
 adapter.register_extraction("smoke", list(spec))
 print(adapter.generate("smoke", "Hello, my name is", {"max_new_tokens": 8}, router))
 router.shutdown()

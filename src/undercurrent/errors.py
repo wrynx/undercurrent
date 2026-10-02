@@ -7,7 +7,7 @@ doesn't exist, a missing vLLM, ...)::
     from undercurrent.errors import ProbingError
 
     try:
-        model = ProbedModel.from_pretrained("gpt2", spec="probes.yaml")
+        model = ProbedModel.from_pretrained("openai-community/gpt2", spec="probes.yaml")
     except ProbingError as exc:
         print(f"configuration problem: {exc}")
 

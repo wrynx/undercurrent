@@ -20,8 +20,8 @@ inspect-model` reads only the model's `config.json`, so it is instant and
 downloads no weights:
 
 ```console
-$ undercurrent inspect-model gpt2 --backend hf
-model:       gpt2
+$ undercurrent inspect-model openai-community/gpt2 --backend hf
+model:       openai-community/gpt2
 class:       GPT2LMHeadModel (model_type=gpt2)
 layers:      12
 hidden size: 768
@@ -100,7 +100,7 @@ from undercurrent.model import ProbedModel
 
 PROMPT = "The quick brown fox"
 
-with ProbedModel.from_pretrained("gpt2", spec=SPEC, probes={"norm_gate": norm_gate}) as model:
+with ProbedModel.from_pretrained("openai-community/gpt2", spec=SPEC, probes={"norm_gate": norm_gate}) as model:
     out = model.generate(PROMPT, max_new_tokens=20, temperature=0)
 
 print(repr(out.text))
@@ -181,7 +181,9 @@ extraction_points:
       min_tokens: 5
 """
 
-with ProbedModel.from_pretrained("gpt2", spec=DRIFT_SPEC, probes={"mean_norm": MeanNormProbe}) as model:
+with ProbedModel.from_pretrained(
+    "openai-community/gpt2", spec=DRIFT_SPEC, probes={"mean_norm": MeanNormProbe}
+) as model:
     out = model.generate(PROMPT, max_new_tokens=20, temperature=0)
 
 print(repr(out.text))
@@ -209,7 +211,7 @@ while you generate a batch of prompts:
 collected = []
 
 with ProbedModel.from_pretrained(
-    "gpt2", spec=DRIFT_SPEC, probes={"mean_norm": MeanNormProbe}, on_result=collected.append
+    "openai-community/gpt2", spec=DRIFT_SPEC, probes={"mean_norm": MeanNormProbe}, on_result=collected.append
 ) as model:
     model.generate(["Once upon a time", "The weather today is"], max_new_tokens=10, temperature=0)
 
@@ -237,7 +239,7 @@ OBSERVE_SPEC = DRIFT_SPEC.replace("execution_mode: inline", "execution_mode: asy
 log_path = Path(tempfile.mkdtemp()) / "observations.ndjson"
 
 with ProbedModel.from_pretrained(
-    "gpt2", spec=OBSERVE_SPEC, probes={"mean_norm": MeanNormProbe}, log_sink=FileLogSink(log_path)
+    "openai-community/gpt2", spec=OBSERVE_SPEC, probes={"mean_norm": MeanNormProbe}, log_sink=FileLogSink(log_path)
 ) as model:
     out = model.generate(PROMPT, max_new_tokens=20, temperature=0)
 

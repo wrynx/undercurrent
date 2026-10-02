@@ -29,7 +29,7 @@
 # check that vLLM's `residual_stream` matches the HF backend's on a fused-residual
 # (Llama) and a single-tensor (GPT-2) model; the script fails if it didn't run.
 #
-# Downloads `gpt2` from the Hugging Face Hub (sets RUN_NETWORK_TESTS=1).
+# Downloads `openai-community/gpt2` (GPT-2) from the Hugging Face Hub (sets RUN_NETWORK_TESTS=1).
 # Fails if CUDA or vLLM isn't usable, if the installed vLLM is outside the
 # supported range (without --allow-unsupported-vllm), if any test fails, or if
 # any GPU test was skipped: a skipped GPU test means it didn't check anything.
@@ -147,7 +147,10 @@ try:
 except (OSError, ET.ParseError) as exc:
     print(f"gpu_check: no pytest report ({exc})", file=sys.stderr)
     sys.exit(1)
-cases = list(root.iter("testcase"))
+# A module skipped at collection time (e.g. tests/docs when mktestdocs isn't
+# installed) shows up as a testcase with an empty classname and the module as
+# its name; it isn't a GPU test.
+cases = [c for c in root.iter("testcase") if c.get("classname")]
 skipped = [c for c in cases if c.find("skipped") is not None]
 for c in skipped:
     print(f"gpu_check: skipped: {c.get('classname')}::{c.get('name')}: {c.find('skipped').get('message')}", file=sys.stderr)

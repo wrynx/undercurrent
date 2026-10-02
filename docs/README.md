@@ -37,7 +37,7 @@ The fence language decides whether CI runs a block:
 - ` ```python ` blocks run on a **CPU-only** machine. Blocks on the same page
   run in order and share state, so a later block can use names defined in an
   earlier one. Network access is allowed (for Hugging Face Hub downloads such
-  as `gpt2`). Every block must be complete and runnable: no `...`
+  as `openai-community/gpt2`). Every block must be complete and runnable: no `...`
   placeholders, no undefined names.
 - ` ```py ` blocks are illustrative and never run. Use them for code that needs
   a GPU or vLLM, and for fragments. Put an admonition before GPU-only blocks:

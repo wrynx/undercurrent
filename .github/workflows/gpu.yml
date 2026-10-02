@@ -81,7 +81,7 @@ concurrency:
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PYTHONUNBUFFERED: "1"
-  # The vLLM integration test downloads `gpt2` from the Hub; `network` tests
+  # The vLLM integration test downloads `openai-community/gpt2` from the Hub; `network` tests
   # are skipped without this.
   RUN_NETWORK_TESTS: "1"
 
