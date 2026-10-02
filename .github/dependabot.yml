@@ -27,6 +27,16 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # `widen` only ever raises an upper bound to admit a new release. It never
+    # raises a floor: this is a library, and loose floors (e.g. torch>=2.1) are
+    # deliberate, see docs/compatibility.md. The default strategy would bump
+    # floors to the latest release.
+    versioning-strategy: widen
+    # vLLM is bumped by hand: a new minor needs scripts/gpu_check.sh on a GPU
+    # first, plus SUPPORTED_VLLM in src/undercurrent/adapters/vllm/version_check.py
+    # and docs/compatibility.md in the same change.
+    ignore:
+      - dependency-name: "vllm"
     labels:
       - "dependencies"
       - "pip"
