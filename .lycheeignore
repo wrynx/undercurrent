@@ -6,15 +6,3 @@
 
 # Placeholder hosts in examples (webhook sink URLs and similar).
 ^https?://([a-z0-9-]+\.)*example\.(com|org|net)([:/]|$)
-
-# Not live until go-public: the repo is still private (renamed to
-# wrynx/undercurrent at launch), so these return 404 to an anonymous
-# checker. Remove these three after the repo is public and Pages is
-# deployed.
-^https://github\.com/wrynx/undercurrent([/.?#]|$)
-^https://raw\.githubusercontent\.com/wrynx/undercurrent/
-^https://colab\.research\.google\.com/github/wrynx/undercurrent/
-^https://wrynx\.github\.io/undercurrent([/?#]|$)
-
-# Not live until the first release is uploaded to PyPI. Remove after v0.1.0.
-^https://pypi\.org/project/undercurrent/?$
