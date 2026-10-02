@@ -147,7 +147,10 @@ try:
 except (OSError, ET.ParseError) as exc:
     print(f"gpu_check: no pytest report ({exc})", file=sys.stderr)
     sys.exit(1)
-cases = list(root.iter("testcase"))
+# A module skipped at collection time (e.g. tests/docs when mktestdocs isn't
+# installed) shows up as a testcase with an empty classname and the module as
+# its name; it isn't a GPU test.
+cases = [c for c in root.iter("testcase") if c.get("classname")]
 skipped = [c for c in cases if c.find("skipped") is not None]
 for c in skipped:
     print(f"gpu_check: skipped: {c.get('classname')}::{c.get('name')}: {c.find('skipped').get('message')}", file=sys.stderr)

@@ -48,7 +48,7 @@ from typing import Any
 
 from ...core import RequestContext
 from ...errors import ProbingError
-from ...router import Router
+from ...router import Router, RouterError
 from ...spec import ActivationRecord, ExtractionPoint
 from .._optional import COMPATIBILITY_DOC, require_torch, require_vllm
 from ..base import EngineAdapter
@@ -103,6 +103,11 @@ class VLLMEngineAdapter(EngineAdapter):
         self._tokenizer: Any = None
         self._pending_extraction_points: dict[str, list[ExtractionPoint]] = {}
         self._bound_router: Router | None = None
+        # Requests between router.register_request() and router.end_request(). Activations
+        # drained from the worker for any other request id are late arrivals of an ended
+        # (e.g. aborted) request and are dropped -- see _drain_pending_activations().
+        self._active_requests: set[str] = set()
+        self._active_lock = threading.Lock()
         self._model_name: str | None = None
 
     # -----------------------------------------------------------------
@@ -210,6 +215,8 @@ class VLLMEngineAdapter(EngineAdapter):
             extraction_point_config=None,
         )
         router.register_request(request_id, extraction_points, request_ctx)
+        with self._active_lock:
+            self._active_requests.add(request_id)
         # Pre-serialize to plain dicts before crossing the RPC boundary: ExtractionPoint is a
         # plain @dataclass, not a msgspec.Struct, so vLLM's typed-arg RPC decoder can't
         # reconstruct one from its encoded form and hands the worker a raw dict instead
@@ -227,6 +234,8 @@ class VLLMEngineAdapter(EngineAdapter):
         try:
             return future.result()
         finally:
+            with self._active_lock:
+                self._active_requests.discard(request_id)
             # Finalizes every probe for this request (on_end) and tears down router-side
             # state. Safe even if generation was aborted mid-stream -- see Router.end_request's
             # own docstring on why an aborted request's trajectory probe still gets a clean finish.
@@ -630,6 +639,16 @@ class VLLMEngineAdapter(EngineAdapter):
                 raw["is_generated"],
             ),
         )
+        # The worker's buffer is shared by every in-flight request, so this drain can see
+        # records of requests that already ended (an aborted request's last decode step,
+        # or one that finished while another request was mid-drain). Routing those would
+        # raise RouterError and fail THIS request; they're late, so drop them.
+        with self._active_lock:
+            active = set(self._active_requests)
+        late = [raw for raw in pending if raw["request_id"] not in active]
+        if late:
+            logger.debug("undercurrent.adapters.vllm: dropping %d activation(s) of ended requests", len(late))
+            pending = [raw for raw in pending if raw["request_id"] in active]
         if not pending:
             return
         pending = sorted(
@@ -644,10 +663,17 @@ class VLLMEngineAdapter(EngineAdapter):
                 layer=raw["layer"],
                 token_pos=raw["token_pos"],
                 tensor_type=raw["tensor_type"],
-                tensor=raw["tensor"],
+                tensor=_as_float32_tensor(raw["tensor"]),
                 is_generated=raw["is_generated"],
             )
-            signal = await loop.run_in_executor(None, router.route, record)
+            try:
+                signal = await loop.run_in_executor(None, router.route, record)
+            except RouterError:
+                with self._active_lock:
+                    still_active = record.request_id in self._active_requests
+                if still_active:
+                    raise
+                continue  # the request ended while we were draining: a late arrival
             if signal is not None and signal.action.value == "abort":
                 abort_fn = getattr(self._engine, "abort", None)
                 if abort_fn is None:
@@ -659,3 +685,18 @@ class VLLMEngineAdapter(EngineAdapter):
                 result = abort_fn(record.request_id)
                 if asyncio.iscoroutine(result):
                     await result
+
+
+def _as_float32_tensor(value: Any) -> Any:
+    """A record tensor as a CPU float32 `torch.Tensor`.
+
+    Records that cross the RPC boundary from the worker process arrive as plain
+    nested lists (see worker_extension.py's `pop_pending_activations`). Probes
+    get the same type on every path -- in-process vLLM and the HF backend hand
+    them a `torch.Tensor` -- so rebuild one here.
+    """
+    import torch
+
+    if isinstance(value, torch.Tensor):
+        return value
+    return torch.tensor(value, dtype=torch.float32)

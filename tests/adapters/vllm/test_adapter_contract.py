@@ -8,6 +8,7 @@ import importlib
 import types
 
 import pytest
+import torch
 
 import undercurrent.adapters.vllm as vllm_adapter_pkg
 from tests.adapters.vllm._helpers import make_extraction_point
@@ -174,6 +175,7 @@ def test_drain_pending_activations_merges_across_all_workers_not_just_rank_0():
     from undercurrent.core import ProbeAction, ProbeSignal
 
     adapter = VLLMEngineAdapter()
+    adapter._active_requests.update({"req-1", "req-2"})  # in flight, as between register_request and end_request
 
     def make_record(request_id, layer):
         return {
@@ -182,7 +184,7 @@ def test_drain_pending_activations_merges_across_all_workers_not_just_rank_0():
             "layer": layer,
             "token_pos": 0,
             "tensor_type": "residual_stream",
-            "tensor": f"tensor-{request_id}",
+            "tensor": [1.0, 2.0],
             "is_generated": True,
         }
 
@@ -211,13 +213,14 @@ def test_drain_pending_activations_dedupes_tp_replicated_records():
     from undercurrent.core import ProbeAction, ProbeSignal
 
     adapter = VLLMEngineAdapter()
+    adapter._active_requests.update({"req-1"})  # in flight, as between register_request and end_request
     raw_record = {
         "request_id": "req-1",
         "extraction_point_name": "ep-1",
         "layer": 16,
         "token_pos": 0,
         "tensor_type": "final_norm",
-        "tensor": "identical-post-all-reduce-tensor",
+        "tensor": [0.5, 0.5],
         "is_generated": False,
     }
 
@@ -251,6 +254,7 @@ def test_drain_pending_activations_sorts_across_pp_ranks_by_token_pos_then_layer
     from undercurrent.core import ProbeAction, ProbeSignal
 
     adapter = VLLMEngineAdapter()
+    adapter._active_requests.update({"req-1"})  # in flight, as between register_request and end_request
 
     def make_record(token_pos, layer, is_generated=True):
         return {
@@ -259,7 +263,7 @@ def test_drain_pending_activations_sorts_across_pp_ranks_by_token_pos_then_layer
             "layer": layer,
             "token_pos": token_pos,
             "tensor_type": "residual_stream",
-            "tensor": f"t{token_pos}L{layer}",
+            "tensor": [float(token_pos), float(layer)],
             "is_generated": is_generated,
         }
 
@@ -385,6 +389,7 @@ def test_drain_pending_activations_routes_reconstructed_records_in_order():
     from undercurrent.core import ProbeAction, ProbeSignal
 
     adapter = VLLMEngineAdapter()
+    adapter._active_requests.update({"req-1"})  # in flight, as between register_request and end_request
     raw_records = [
         {
             "request_id": "req-1",
@@ -392,7 +397,7 @@ def test_drain_pending_activations_routes_reconstructed_records_in_order():
             "layer": 0,
             "token_pos": i,
             "tensor_type": "residual_stream",
-            "tensor": f"row{i}",
+            "tensor": [float(i)],
             "is_generated": True,
         }
         for i in range(3)
@@ -415,7 +420,9 @@ def test_drain_pending_activations_routes_reconstructed_records_in_order():
 
     assert [r.token_pos for r in routed] == [0, 1, 2]
     assert all(r.request_id == "req-1" and r.extraction_point_name == "ep-1" for r in routed)
-    assert [r.tensor for r in routed] == ["row0", "row1", "row2"]
+    # Records cross the RPC boundary as nested lists; probes get float32 tensors, as on every other path.
+    assert all(isinstance(r.tensor, torch.Tensor) and r.tensor.dtype == torch.float32 for r in routed)
+    assert [r.tensor.tolist() for r in routed] == [[0.0], [1.0], [2.0]]
 
 
 def test_drain_pending_activations_aborts_engine_on_abort_signal():
@@ -424,13 +431,14 @@ def test_drain_pending_activations_aborts_engine_on_abort_signal():
     from undercurrent.core import ProbeAction, ProbeSignal
 
     adapter = VLLMEngineAdapter()
+    adapter._active_requests.update({"req-abort"})  # in flight, as between register_request and end_request
     raw_record = {
         "request_id": "req-abort",
         "extraction_point_name": "ep-1",
         "layer": 0,
         "token_pos": 0,
         "tensor_type": "residual_stream",
-        "tensor": "row0",
+        "tensor": [0.0],
         "is_generated": True,
     }
 
@@ -449,3 +457,84 @@ def test_drain_pending_activations_aborts_engine_on_abort_signal():
     asyncio.run(adapter._drain_pending_activations(FakeRouter()))
 
     assert aborted == ["req-abort"]
+
+
+def _raw_activation(request_id, token_pos=0):
+    return {
+        "request_id": request_id,
+        "extraction_point_name": "ep-1",
+        "layer": 0,
+        "token_pos": token_pos,
+        "tensor_type": "residual_stream",
+        "tensor": [1.0],
+        "is_generated": True,
+    }
+
+
+def test_drain_pending_activations_drops_records_of_requests_that_already_ended():
+    """The worker's buffer is shared by every in-flight request: a drain can see
+    late records of a request that already ended (e.g. aborted). Routing them would
+    raise RouterError and fail the request that happens to be draining."""
+    import asyncio
+
+    adapter = VLLMEngineAdapter()
+    adapter._active_requests.add("live")
+
+    async def fake_rpc_async(method, args=()):
+        return [_raw_activation("ended"), _raw_activation("live")]
+
+    adapter._rpc_async = fake_rpc_async
+    routed = []
+
+    class FakeRouter:
+        def route(self, record):
+            routed.append(record.request_id)
+
+    asyncio.run(adapter._drain_pending_activations(FakeRouter()))
+    assert routed == ["live"]
+
+
+def test_drain_pending_activations_skips_a_request_that_ends_mid_drain():
+    import asyncio
+
+    from undercurrent.router import RouterError
+
+    adapter = VLLMEngineAdapter()
+    adapter._active_requests.update({"a", "b"})
+
+    async def fake_rpc_async(method, args=()):
+        return [_raw_activation("a"), _raw_activation("b")]
+
+    adapter._rpc_async = fake_rpc_async
+    routed = []
+
+    class FakeRouter:
+        def route(self, record):
+            if record.request_id == "a":
+                adapter._active_requests.discard("a")  # generate() for "a" finished meanwhile
+                raise RouterError("route(): request_id='a' is not registered or has already ended.")
+            routed.append(record.request_id)
+
+    asyncio.run(adapter._drain_pending_activations(FakeRouter()))
+    assert routed == ["b"]
+
+
+def test_drain_pending_activations_still_raises_router_errors_for_live_requests():
+    import asyncio
+
+    from undercurrent.router import RouterError
+
+    adapter = VLLMEngineAdapter()
+    adapter._active_requests.add("live")
+
+    async def fake_rpc_async(method, args=()):
+        return [_raw_activation("live")]
+
+    adapter._rpc_async = fake_rpc_async
+
+    class FakeRouter:
+        def route(self, record):
+            raise RouterError("route(): record doesn't match its extraction point")
+
+    with pytest.raises(RouterError):
+        asyncio.run(adapter._drain_pending_activations(FakeRouter()))
