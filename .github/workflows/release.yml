@@ -96,6 +96,12 @@ jobs:
           PYEOF
 
       - name: Build sdist and wheel
+        # Build exactly the version named by the tag that triggered this run. Without
+        # this, hatch-vcs derives it from `git describe`, which picks an arbitrary tag
+        # when one commit carries several (e.g. v0.1.0rc1 and v0.1.0 on the same commit
+        # built 0.1.0rc1 for the v0.1.0 run). The check below still verifies the result.
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.classify.outputs.version }}
         run: python -m build
 
       - name: Check the built version matches the tag
