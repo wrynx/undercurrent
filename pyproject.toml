@@ -62,7 +62,7 @@ dependencies = [
     # the StoppingCriteria contract since transformers 4.39. `<6`: the HF
     # adapter hooks model structure (decoder-layer attribute paths, layer
     # output shapes) that a major release may reorganise, as 5.x did.
-    "transformers>=4.40,<6",
+    "transformers>=5.17.0,<6",
     # Not imported directly (torch/transformers need it). No ceiling, so we
     # never block a numpy that torch itself accepts.
     "numpy>=1.23",
