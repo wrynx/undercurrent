@@ -37,10 +37,12 @@ without adding latency to the response.
   [Deploy with vLLM](https://wrynx.github.io/undercurrent/guides/vllm-deployment/)),
   and with Hugging Face Transformers on a laptop CPU.
 
-> **Known issues (v0.1):** the vLLM adapter hasn't run on a GPU in CI yet.
-> Fixed in 0.1.0: on vLLM, `residual_stream` on Llama-family (fused-residual)
-> models is captured as `hidden_states + residual`, the same residual stream
-> as the HF backend; GPU verification is pending. See
+> **Known issues (v0.1):** the vLLM adapter is experimental: its GPU tests
+> pass on an NVIDIA L4 with vLLM 0.28.0, run by hand (there's no GPU CI yet),
+> and only vLLM 0.28 is supported. Fixed in 0.1.0: on vLLM, `residual_stream`
+> on Llama-family (fused-residual) models is captured as
+> `hidden_states + residual`, the same residual stream as the HF backend
+> (GPU-verified). See
 > [Known issues](https://wrynx.github.io/undercurrent/compatibility/#known-issues-v01).
 
 ## How it works

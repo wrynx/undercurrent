@@ -38,6 +38,7 @@ Only combinations that have actually been run are listed here.
 | Python | torch | transformers | vllm | CUDA | Status |
 |--------|-------|--------------|------|------|--------|
 | 3.14.4 | 2.13.0 (`+cu130` build) | 5.16.1 | 0.28.0 | As provided by the vLLM wheel; no GPU present | **Tested locally**: full unit test suite, CPU only. GPU and real vLLM generation tests were skipped. |
+| 3.13.15 | 2.13.0 (`+cu130` build) | 5.17.0 | 0.28.0 | 13.0, NVIDIA L4 (driver 580.82.07) | **GPU-verified, 2026-10-02**: `scripts/gpu_check.sh` passed, covering every GPU test (vLLM integration, `ProbedModel` with the vLLM backend, and the `residual_stream` HF-vs-vLLM equivalence check) and the vLLM adapter suite against the real vLLM. Run on Google Colab. |
 | 3.10.21 | 2.1.2 (`+cpu` build) | 4.40.2 | not installed | n/a | **The declared lower bounds** (with pydantic 2.0.3, PyYAML 6.0.3, numpy 1.23.5, packaging 22.0): CPU unit test suite passes locally. The CI `floors` job installs the same versions and runs the suite. Tests tied to newer releases skip themselves (the byte-for-byte JSON Schema comparisons need pydantic 2.11+; the content-safety demo needs torch 2.6+ to load checkpoints). |
 
 There is no GPU CI for v0.1. Instead, before every release a maintainer runs
@@ -59,7 +60,8 @@ These affect the vLLM adapter only. The Hugging Face backend is not affected.
 ### Fixed in 0.1.0: `residual_stream` on fused-residual vLLM layers
 
 **Fixed in 0.1.0: `residual_stream` on fused-residual layers is captured as
-`hidden_states + residual`. GPU-verified: pending `scripts/gpu_check.sh`.**
+`hidden_states + residual`. GPU-verified on 2026-10-02 (NVIDIA L4, vLLM 0.28.0,
+torch 2.13.0+cu130) with `scripts/gpu_check.sh`.**
 
 - **The problem.** `residual_stream` is a forward hook on the decoder layer.
   vLLM's fused-residual decoder layers (for example `LlamaDecoderLayer.forward`
@@ -90,8 +92,9 @@ These affect the vLLM adapter only. The Hugging Face backend is not affected.
   [Tensor & pipeline parallelism](internals/vllm-parallelism.md#residual_stream).
 - **GPU verification.** `tests/adapters/vllm/test_residual_stream_gpu.py`
   loads a tiny random Llama and GPT-2 with both backends and checks that the
-  per-token `residual_stream` captures match. It runs in
-  `scripts/gpu_check.sh` and hasn't run on a GPU yet. CPU tests check the
+  per-token `residual_stream` captures match (relative error at most 1e-3).
+  It passed on an NVIDIA L4 with vLLM 0.28.0 (see
+  [Tested combinations](#tested-combinations)). CPU tests check the
   capture against fake layers with vLLM's contract, and an upstream-contract
   test fails if the installed vLLM's `LlamaDecoderLayer` stops returning
   `(hidden_states, residual)`.
@@ -99,14 +102,16 @@ These affect the vLLM adapter only. The Hugging Face backend is not affected.
   vLLM before this fix, from these models, hold the MLP output. Re-capture
   them, or use the HF backend.
 
-### The vLLM adapter has not run on a GPU in CI
+### No GPU CI for the vLLM adapter
 
-There is no GPU CI for v0.1, and the GPU and real-vLLM tests haven't been run
-yet for this release. The vLLM adapter is experimental. A maintainer runs
+There is no GPU CI for v0.1. The GPU and real-vLLM tests run by hand: a
+maintainer runs
 [`scripts/gpu_check.sh`](https://github.com/wrynx/undercurrent/blob/main/scripts/gpu_check.sh)
 on a GPU machine before each release, and the combination it ran with goes
-into [Tested combinations](#tested-combinations). You can run it on your own
-GPU machine too (see above).
+into [Tested combinations](#tested-combinations). For 0.1.0 that's an NVIDIA
+L4 with vLLM 0.28.0. Other GPUs, larger models and multi-GPU topologies
+haven't been run, and the vLLM adapter is still experimental. You can run the
+check on your own GPU machine too (see above).
 
 ### vLLM 0.29 and 0.30 aren't supported yet
 

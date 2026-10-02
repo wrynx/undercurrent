@@ -155,16 +155,18 @@ container image, and more) is tracked in the
   the layer's MLP output. It now captures `hidden_states + residual`, the
   residual stream after the layer, matching the HF backend. Decoder-layer
   outputs the adapter can't classify raise `VLLMAdapterLimitationError`
-  instead of being captured silently. GPU verification is pending
-  (`scripts/gpu_check.sh`, `tests/adapters/vllm/test_residual_stream_gpu.py`).
+  instead of being captured silently. Verified on GPU (NVIDIA L4, vLLM 0.28.0)
+  by `tests/adapters/vllm/test_residual_stream_gpu.py`, which compares the
+  vLLM and HF captures token by token.
 
 ### Known issues
 
 See [Known issues (v0.1)](https://github.com/wrynx/undercurrent/blob/main/docs/compatibility.md#known-issues-v01)
 for details and workarounds.
 
-- **The vLLM adapter has not run on a GPU in CI.** The GPU tests run by hand
-  with `scripts/gpu_check.sh`.
+- **No GPU CI.** The GPU tests run by hand with `scripts/gpu_check.sh` before
+  each release. 0.1.0 passed on an NVIDIA L4 with vLLM 0.28.0, torch 2.13.0
+  and CUDA 13.0; other GPUs and multi-GPU topologies haven't been run.
 - **Only vLLM 0.28 is supported** (`vllm>=0.28,<0.29`), and vLLM 0.30 is
   already out. `UNDERCURRENT_ALLOW_UNSUPPORTED_VLLM=1` lets you try a newer
   vLLM; the range widens only after a GPU validation run.
