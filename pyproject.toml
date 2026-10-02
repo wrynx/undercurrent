@@ -57,7 +57,7 @@ dependencies = [
     # existing vLLM env/image. Any upper bound here would eventually fight
     # that pin and make pip downgrade or refuse. Same for CUDA builds: use the
     # torch your toolchain or image provides.
-    "torch>=2.1",
+    "torch>=2.14.0",
     # 4.40 floor: ProbingStoppingCriteria returns a per-sequence BoolTensor,
     # the StoppingCriteria contract since transformers 4.39. `<6`: the HF
     # adapter hooks model structure (decoder-layer attribute paths, layer
