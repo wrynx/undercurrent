@@ -50,8 +50,8 @@ classifiers = [
 # a next-minor ceiling for dependencies whose internals we hook (vllm), a
 # next-major ceiling otherwise -- except torch and numpy, see below.
 dependencies = [
-    "pydantic>=2,<3",
-    "PyYAML>=6,<7",
+    "pydantic>=2.13.5,<3",
+    "PyYAML>=6.0.3,<7",
     # Deliberately a loose floor and NO ceiling: every vLLM release pins an
     # exact torch version, and undercurrent is meant to be installed into an
     # existing vLLM env/image. Any upper bound here would eventually fight
@@ -65,9 +65,9 @@ dependencies = [
     "transformers>=4.40,<6",
     # Not imported directly (torch/transformers need it). No ceiling, so we
     # never block a numpy that torch itself accepts.
-    "numpy>=1.23",
+    "numpy>=2.2.6",
     # Runtime vLLM version gate (undercurrent.adapters.vllm.version_check).
-    "packaging>=22",
+    "packaging>=26.3",
 ]
 
 [project.optional-dependencies]
@@ -102,9 +102,9 @@ dev = [
     "mypy>=1.11",
     "types-PyYAML",
     # Execute notebooks/*.ipynb in tests/notebooks/.
-    "nbclient>=0.10",
-    "nbformat>=5.10",
-    "ipykernel>=6",
+    "nbclient>=0.11.0",
+    "nbformat>=5.11.1",
+    "ipykernel>=7.3.0",
 ]
 
 [project.urls]
