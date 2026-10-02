@@ -230,7 +230,7 @@ Versions, release dates and licenses were checked on the review date below.
   [vLLM support docs](https://nnsight.net/documentation/modeling/vllm/);
   [NNsight × vLLM: Interpretability at Production Scale](https://nnsight.net/blog/2026/07/13/nnsight--vllm-interpretability-at-production-scale/)
   (`nnsight-serve`, continuous batching, `AsyncLLM`, one mediator per request,
-  eager mode); [NNsight 0.5.13 release notes](https://discuss.ndif.us/t/nnsight-0-5-13-release-vllm-integration-and-performance-improvements/128).
+  eager mode); [NNsight 0.5.13 release notes](https://github.com/ndif-team/nnsight/releases/tag/v0.5.13).
 - **pyvene**: [PyPI `pyvene`](https://pypi.org/project/pyvene/) (0.1.8,
   released 2025-05-26; Apache-2.0); [GitHub README](https://github.com/stanfordnlp/pyvene)
   (purpose, dict-specified interventions, supported models).
