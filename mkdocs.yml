@@ -28,6 +28,8 @@ validation:
 
 theme:
   name: material
+  logo: assets/brand/undercurrent-mark-dark.svg
+  favicon: assets/brand/undercurrent-icon.svg
   features:
     - navigation.sections
     - navigation.top
@@ -37,14 +39,21 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
+
+extra_css:
+  - stylesheets/brand.css
 
 markdown_extensions:
   - admonition

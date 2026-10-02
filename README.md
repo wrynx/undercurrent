@@ -1,6 +1,11 @@
-# Undercurrent
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/wrynx/undercurrent/main/docs/assets/brand/undercurrent-logo-dark.png">
+    <img alt="Undercurrent" src="https://raw.githubusercontent.com/wrynx/undercurrent/main/docs/assets/brand/undercurrent-logo.png" width="440">
+  </picture>
+</p>
 
-*See the undercurrent before it surfaces.*
+<p align="center"><em>See the undercurrent before it surfaces.</em></p>
 
 [![PyPI](https://img.shields.io/pypi/v/undercurrent)](https://pypi.org/project/undercurrent/)
 [![Python versions](https://img.shields.io/pypi/pyversions/undercurrent)](https://pypi.org/project/undercurrent/)

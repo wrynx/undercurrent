@@ -1,4 +1,8 @@
-# Undercurrent
+---
+title: Undercurrent
+---
+
+# ![Undercurrent](assets/brand/undercurrent-logo.svg#only-light){ width="420" } ![Undercurrent](assets/brand/undercurrent-logo-dark.svg#only-dark){ width="420" }
 
 <!-- owner: p3-quickstart -->
 

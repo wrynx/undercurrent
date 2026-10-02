@@ -1,0 +1,31 @@
+/* Undercurrent brand colours (see docs/assets/brand/). */
+:root,
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #0b1220;        /* ink: header and tabs */
+  --md-primary-fg-color--light: #1e293b;
+  --md-primary-fg-color--dark: #020617;
+  --md-accent-fg-color: #3b82f6;         /* current blue: links on hover, focus */
+  --md-typeset-a-color: #2563eb;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #0b1220;
+  --md-primary-fg-color--light: #1e293b;
+  --md-primary-fg-color--dark: #020617;
+  --md-accent-fg-color: #2dd4bf;         /* current teal */
+  --md-typeset-a-color: #60a5fa;
+  --md-default-bg-color: #0d1424;
+}
+
+/* Home page: the logo is the H1, so drop the H1's own spacing and anchor link. */
+.md-typeset h1:has(img) {
+  margin: 0 0 1.2em;
+  line-height: 0;
+}
+.md-typeset h1:has(img) .headerlink {
+  display: none;
+}
+/* Header logo a touch larger than Material's default 1.2rem. */
+.md-header__button.md-logo img {
+  height: 1.6rem;
+}
