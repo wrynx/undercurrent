@@ -78,7 +78,7 @@ vllm = [
     # only after the GPU CI passes against the new minor, together with
     # SUPPORTED_VLLM in src/undercurrent/adapters/vllm/version_check.py and
     # docs/compatibility.md.
-    "vllm>=0.28,<0.29",
+    "vllm>=0.30.0,<0.31",
 ]
 # Contributor-only: builds the docs site (mkdocs.yml).
 docs = [
