@@ -63,8 +63,8 @@ device, so no weights are downloaded or allocated.
 | `--revision REV` | Model revision (branch, tag or commit) to read. |
 
 ```bash
-undercurrent inspect-model gpt2
-undercurrent inspect-model gpt2 --backend hf --emit-spec probes.yaml
+undercurrent inspect-model openai-community/gpt2
+undercurrent inspect-model openai-community/gpt2 --backend hf --emit-spec probes.yaml
 ```
 
 ## `undercurrent validate`

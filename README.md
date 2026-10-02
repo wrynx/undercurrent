@@ -105,7 +105,7 @@ def norm_gate(record: ActivationRecord) -> float:
     return float(record.tensor.norm())
 
 
-with ProbedModel.from_pretrained("gpt2", spec=SPEC, probes={"norm_gate": norm_gate}) as model:
+with ProbedModel.from_pretrained("openai-community/gpt2", spec=SPEC, probes={"norm_gate": norm_gate}) as model:
     out = model.generate("The quick brown fox", max_new_tokens=20, temperature=0)
 
 print(repr(out.text))

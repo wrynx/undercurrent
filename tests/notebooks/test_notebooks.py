@@ -2,7 +2,7 @@
 
 Cells tagged ``skip-ci`` (the ``%pip install`` cell) are dropped: the test
 runs against the checkout installed in the current environment. The
-notebooks read ``UNDERCURRENT_NB_MODEL`` and default to ``gpt2``; the test
+notebooks read ``UNDERCURRENT_NB_MODEL`` and default to ``openai-community/gpt2``; the test
 points them at a tiny random GPT-2 so a CPU run takes seconds, not minutes.
 ``train_probe.ipynb`` also reads its dataset and sample size from the
 environment: the test uses the built-in offline ``toy`` dataset (no

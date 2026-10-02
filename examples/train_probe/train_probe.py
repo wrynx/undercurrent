@@ -1,6 +1,6 @@
 """Train a linear (or small MLP) probe on a model's activations with Undercurrent.
 
-    python examples/train_probe/train_probe.py --model gpt2 --dataset toy --layer 6 --epochs 20
+    python examples/train_probe/train_probe.py --model openai-community/gpt2 --dataset toy --layer 6 --epochs 20
 
 Pipeline: load a labelled dataset (`data_sources.py`), collect one
 activation per prompt with `ProbedModel` + `ActivationCollectorProbe`
@@ -38,7 +38,11 @@ SPLITS = (0.70, 0.15, 0.15)
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--model", default="gpt2", help="Hugging Face model id or local path (default: gpt2)")
+    parser.add_argument(
+        "--model",
+        default="openai-community/gpt2",
+        help="Hugging Face model id or local path (default: openai-community/gpt2)",
+    )
     parser.add_argument("--dataset", default="toy", choices=sorted(SOURCES), help="data source (default: toy)")
     parser.add_argument("--layer", type=int, required=True, help="layer index to probe (0-based)")
     parser.add_argument("--position", default="prompt[-1]", help="spec position to read (default: prompt[-1])")

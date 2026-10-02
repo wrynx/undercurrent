@@ -568,7 +568,7 @@ results with an `on_request_end` listener:
 from undercurrent.adapters.hf import HFEngineAdapter
 
 adapter = HFEngineAdapter()
-adapter.load_model("gpt2", device="cpu")
+adapter.load_model("openai-community/gpt2", device="cpu")
 
 router = Router()  # the global registry: @probe / @register_probe names, plus plugins
 results_by_request = {}

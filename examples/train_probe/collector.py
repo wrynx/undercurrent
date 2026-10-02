@@ -9,7 +9,7 @@ Wire it to an extraction point and every matching activation ends up in the
                                    "position": "prompt[-1]", "probe_type": "collector",
                                    "probe_kind": "single_shot"}]}
     probes = {"collector": ProbeFactory(ActivationCollectorProbe, {"max_tokens": 1})}
-    with ProbedModel.from_pretrained("gpt2", spec=spec, probes=probes) as m:
+    with ProbedModel.from_pretrained("openai-community/gpt2", spec=spec, probes=probes) as m:
         out = m.generate("Hello there", max_new_tokens=1)
     vector = out.probe_results["collect"].verdict[0]["tensor"]  # torch.Tensor, [hidden]
 """

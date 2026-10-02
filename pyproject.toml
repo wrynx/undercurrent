@@ -95,6 +95,9 @@ dev = [
     # Coverage in CI: `pytest --cov --cov-report=xml`. Not in addopts, so a
     # plain `pytest` works without it.
     "pytest-cov>=5",
+    # Hard per-test time limit for `gpu` tests (tests/conftest.py): a stuck vLLM
+    # engine dumps every thread's stack and fails instead of hanging the run.
+    "pytest-timeout>=2.3",
     "ruff>=0.16,<0.17",
     "pre-commit>=4",
     # Validates example specs against schema/probe-spec.schema.json in tests.

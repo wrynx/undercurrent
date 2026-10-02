@@ -39,6 +39,7 @@ single sequential HF-style loop cannot demonstrate at all.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import threading
@@ -82,7 +83,7 @@ class VLLMEngineAdapter(EngineAdapter):
 
     ```python
     adapter = VLLMEngineAdapter()
-    adapter.load_model("gpt2")
+    adapter.load_model("openai-community/gpt2")
     adapter.register_extraction(request_id, extraction_points)
     text = adapter.generate(request_id, prompt, {"max_tokens": 32}, router)
     adapter.unregister_extraction(request_id)
@@ -158,13 +159,21 @@ class VLLMEngineAdapter(EngineAdapter):
         self._engine = AsyncLLMEngine.from_engine_args(engine_args)
         self._model_name = model_name_or_path
 
-        # _check_executor_topology() below needs to make an RPC call, which needs a running
-        # loop to bridge onto (see _rpc()) -- must start this before that check, not after.
-        self._loop = asyncio.new_event_loop()
-        self._loop_thread = threading.Thread(target=self._loop.run_forever, name="undercurrent-vllm-loop", daemon=True)
-        self._loop_thread.start()
+        try:
+            # _check_executor_topology() below needs to make an RPC call, which needs a running
+            # loop to bridge onto (see _rpc()) -- must start this before that check, not after.
+            self._loop = asyncio.new_event_loop()
+            self._loop_thread = threading.Thread(
+                target=self._loop.run_forever, name="undercurrent-vllm-loop", daemon=True
+            )
+            self._loop_thread.start()
 
-        self._check_executor_topology(allow_unsupported_executor)
+            self._check_executor_topology(allow_unsupported_executor)
+        except BaseException:
+            # Don't leave a half-started engine behind: its EngineCore process keeps GPU
+            # memory, and garbage-collecting it later can block (see shutdown()).
+            self.shutdown()
+            raise
 
     def register_extraction(self, request_id: str, extraction_points: list[ExtractionPoint]) -> None:
         if request_id in self._pending_extraction_points:
@@ -228,16 +237,39 @@ class VLLMEngineAdapter(EngineAdapter):
         if self._engine is not None:
             self._rpc("unregister_extraction", args=(request_id,))
 
-    def shutdown(self) -> None:
-        """Stop the background event-loop thread.
+    def shutdown(self, timeout: float | None = 30.0) -> None:
+        """Shut down the vLLM engine and the background event-loop thread.
 
         Not part of the ``EngineAdapter`` contract. Call it when tearing the
-        adapter down, so the thread doesn't leak.
+        adapter down; it's safe to call more than once, and the adapter can't
+        be used afterwards.
+
+        The engine is shut down explicitly, first: vLLM's `AsyncLLM` runs its
+        `EngineCore` in a subprocess and talks to it over ZeroMQ. Leaving that
+        to garbage collection keeps the subprocess (and its GPU memory) alive,
+        and collecting the client later can block forever in ZeroMQ's
+        `Context.term()` while its sockets are still open. `timeout` (seconds)
+        bounds the engine shutdown.
         """
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-        if self._loop_thread is not None:
-            self._loop_thread.join(timeout=10)
+        engine, self._engine = self._engine, None
+        if engine is not None:
+            try:
+                if "timeout" in inspect.signature(engine.shutdown).parameters:
+                    engine.shutdown(timeout=timeout)
+                else:  # older engines' shutdown() takes no timeout
+                    engine.shutdown()
+            except Exception:
+                logger.warning("VLLMEngineAdapter.shutdown(): engine shutdown failed", exc_info=True)
+        loop, thread = self._loop, self._loop_thread
+        self._loop, self._loop_thread = None, None
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(loop.stop)
+        if thread is not None:
+            thread.join(timeout=10)
+        if loop is not None and not loop.is_running() and not loop.is_closed():
+            loop.close()
+        self._bound_router = None
+        self._pending_extraction_points.clear()
 
     # -----------------------------------------------------------------
     # Internals

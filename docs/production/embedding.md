@@ -236,7 +236,7 @@ def collect(request_id, results):
 
 
 adapter = HFEngineAdapter()
-adapter.load_model("gpt2", device="cpu")
+adapter.load_model("openai-community/gpt2", device="cpu")
 
 with Router({"norm": norm}) as router:
     remove_listener = router.on_request_end(collect)
@@ -284,7 +284,7 @@ router = Router({"norm": norm}, worker_pool_size=64)
 router.on_request_end(collect)
 
 adapter = VLLMEngineAdapter()  # checks the installed vLLM version
-adapter.load_model("gpt2", gpu_memory_utilization=0.3, max_model_len=1024, enforce_eager=True)
+adapter.load_model("openai-community/gpt2", gpu_memory_utilization=0.3, max_model_len=1024, enforce_eager=True)
 
 
 def handle(prompt: str) -> dict:

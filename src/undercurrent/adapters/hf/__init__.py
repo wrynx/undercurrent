@@ -7,7 +7,7 @@ See docs/_legacy/ for the full architecture writeup. Short version::
     from undercurrent.adapters.hf import HFEngineAdapter
 
     adapter = HFEngineAdapter()
-    adapter.load_model("gpt2")
+    adapter.load_model("openai-community/gpt2")
     adapter.register_extraction(request_id, extraction_points)
     text = adapter.generate(request_id, prompt, {"max_new_tokens": 32}, router)
     adapter.unregister_extraction(request_id)

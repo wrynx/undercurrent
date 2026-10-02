@@ -29,7 +29,7 @@
 # check that vLLM's `residual_stream` matches the HF backend's on a fused-residual
 # (Llama) and a single-tensor (GPT-2) model; the script fails if it didn't run.
 #
-# Downloads `gpt2` from the Hugging Face Hub (sets RUN_NETWORK_TESTS=1).
+# Downloads `openai-community/gpt2` (GPT-2) from the Hugging Face Hub (sets RUN_NETWORK_TESTS=1).
 # Fails if CUDA or vLLM isn't usable, if the installed vLLM is outside the
 # supported range (without --allow-unsupported-vllm), if any test fails, or if
 # any GPU test was skipped: a skipped GPU test means it didn't check anything.

@@ -6,7 +6,7 @@ are illustrative and never run. Each file gets a fresh namespace and runs
 with ``tmp_path`` as its working directory, so nothing lands in the repo.
 
 Run with ``RUN_NETWORK_TESTS=1 pytest tests/docs -m slow`` (pages download
-``gpt2`` from the Hugging Face Hub on first use).
+``openai-community/gpt2`` from the Hugging Face Hub on first use).
 """
 
 from pathlib import Path

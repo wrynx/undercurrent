@@ -125,7 +125,7 @@ def norm_gate(record: ActivationRecord) -> float:
 prompts = ["Hello, my name is", "The capital of France is", "Once upon a time"]
 
 with ProbedModel.from_pretrained(
-    "gpt2",
+    "openai-community/gpt2",
     backend="vllm",
     spec=SPEC,
     probes={"norm_gate": norm_gate},
@@ -183,7 +183,7 @@ import queue
 results: queue.Queue = queue.Queue()
 
 with ProbedModel.from_pretrained(
-    "gpt2",
+    "openai-community/gpt2",
     backend="vllm",
     spec=SPEC,
     probes={"norm_gate": norm_gate},

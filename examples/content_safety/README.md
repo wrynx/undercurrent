@@ -25,7 +25,7 @@ Run these from the repo root. They need a GPU and `vllm` installed:
 
 ```bash
 pip install -e .    # plus the vLLM adapter
-python examples/content_safety/run_vllm_pipeline.py --model gpt2 --prompt "Hello" --max-tokens 32
+python examples/content_safety/run_vllm_pipeline.py --model openai-community/gpt2 --prompt "Hello" --max-tokens 32
 
 python examples/content_safety/make_dummy_mlp_checkpoint.py --input-dim 4096 --out /tmp/mlp_probe.pt
 PROBE_MODEL_PATH=/tmp/mlp_probe.pt python examples/openai_server/serve_llama_mlp_pipeline.py --port 8000

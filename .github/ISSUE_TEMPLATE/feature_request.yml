@@ -26,7 +26,7 @@ body:
       placeholder: |
         from undercurrent import ProbedModel
 
-        model = ProbedModel.from_pretrained("gpt2", spec="spec.yaml")
+        model = ProbedModel.from_pretrained("openai-community/gpt2", spec="spec.yaml")
         ...
     validations:
       required: true

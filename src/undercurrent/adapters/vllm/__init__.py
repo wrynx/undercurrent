@@ -7,7 +7,7 @@ limitations). Short version::
     from undercurrent.adapters.vllm import VLLMEngineAdapter
 
     adapter = VLLMEngineAdapter()
-    adapter.load_model("gpt2")
+    adapter.load_model("openai-community/gpt2")
     adapter.register_extraction(request_id, extraction_points)
     text = adapter.generate(request_id, prompt, {"max_tokens": 32}, router)
     adapter.unregister_extraction(request_id)

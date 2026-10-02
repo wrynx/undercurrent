@@ -1,7 +1,7 @@
 """Real-vLLM integration test: a small model, actual generation, actual
 continuous batching.
 
-Requires a GPU and a CUDA/ROCm-matched vLLM install, and downloads `gpt2`
+Requires a GPU and a CUDA/ROCm-matched vLLM install, and downloads `openai-community/gpt2`
 from the Hugging Face Hub, so every test here is marked `gpu` and `network`
 (the root `tests/conftest.py` skips them when CUDA is unavailable, or unless
 `RUN_NETWORK_TESTS=1` is set) and the module is additionally gated behind
@@ -45,10 +45,11 @@ pytest.importorskip("vllm", reason="integration test requires a real vLLM instal
 from tests.adapters.vllm._helpers import make_extraction_point
 from undercurrent.adapters.vllm import VLLMEngineAdapter
 from undercurrent.core import Probe, ProbeResult, RequestContext
+from undercurrent.core.registry import ProbeRegistry
 from undercurrent.router import ProbeFactory, Router
 from undercurrent.spec import ProbeKind
 
-SMALL_MODEL = "gpt2"
+SMALL_MODEL = "openai-community/gpt2"
 
 
 @pytest.fixture(scope="module")
@@ -57,6 +58,21 @@ def adapter():
     a.load_model(SMALL_MODEL, gpu_memory_utilization=0.3, max_model_len=64, enforce_eager=True)
     yield a
     a.shutdown()
+
+
+@pytest.fixture(scope="module")
+def registry():
+    return ProbeRegistry(load_entry_points=False)
+
+
+@pytest.fixture(scope="module")
+def router(registry):
+    # One Router for the module: a VLLMEngineAdapter binds exactly one Router for its
+    # lifetime. Each test registers its own probes in the shared registry under unique
+    # names, which the Router resolves when the request is registered.
+    r = Router(probe_registry=registry)
+    yield r
+    r.shutdown(wait=True)
 
 
 class SinkProbe(Probe):
@@ -92,17 +108,18 @@ class SingleShotSinkProbe(SinkProbe):
     probe_kind = "single_shot"
 
 
-def make_router(sink, *, abort_after=None, probe_kind="trajectory"):
+def register_sink(registry, name, sink, *, abort_after=None, probe_kind="trajectory"):
+    """Register a sink probe under ``name`` in the module's shared registry; returns ``name``."""
     probe_cls = SingleShotSinkProbe if probe_kind == "single_shot" else SinkProbe
-    registry = {"sink": ProbeFactory(probe_cls, {"sink": sink, "abort_after": abort_after})}
-    return Router(probe_registry=registry)
+    registry.register(name, ProbeFactory(probe_cls, {"sink": sink, "abort_after": abort_after}))
+    return name
 
 
-def test_single_shot_extraction_point_produces_one_correct_record(adapter):
+def test_single_shot_extraction_point_produces_one_correct_record(adapter, registry, router):
     sink = []
-    router = make_router(sink, probe_kind="single_shot")
+    probe_type = register_sink(registry, "sink_single", sink, probe_kind="single_shot")
     ep = make_extraction_point(
-        name="ep-single", layer=0, position="prompt[-1]", probe_type="sink", probe_kind=ProbeKind.SINGLE_SHOT
+        name="ep-single", layer=0, position="prompt[-1]", probe_type=probe_type, probe_kind=ProbeKind.SINGLE_SHOT
     )
     request_id = "int-single-shot"
     adapter.register_extraction(request_id, [ep])
@@ -118,10 +135,10 @@ def test_single_shot_extraction_point_produces_one_correct_record(adapter):
     assert record.tensor is not None
 
 
-def test_trajectory_extraction_point_fires_across_multiple_decode_steps(adapter):
+def test_trajectory_extraction_point_fires_across_multiple_decode_steps(adapter, registry, router):
     sink = []
-    router = make_router(sink)
-    ep = make_extraction_point(name="ep-trajectory", layer=0, position="generated[*]", probe_type="sink")
+    probe_type = register_sink(registry, "sink_trajectory", sink)
+    ep = make_extraction_point(name="ep-trajectory", layer=0, position="generated[*]", probe_type=probe_type)
     request_id = "int-trajectory"
     adapter.register_extraction(request_id, [ep])
     adapter.generate(request_id, "Once upon a time,", {"max_tokens": 8, "temperature": 0.0}, router)
@@ -133,16 +150,13 @@ def test_trajectory_extraction_point_fires_across_multiple_decode_steps(adapter)
     assert len({r.token_pos for r in sink}) == len(sink)  # each decode step produced a distinct token_pos
 
 
-def test_two_concurrent_requests_share_batching_and_route_correctly(adapter):
+def test_two_concurrent_requests_share_batching_and_route_correctly(adapter, registry, router):
     """The scenario HF's sequential adapter cannot exercise at all: two
     `generate()` calls, each on its own Python thread, actually overlapping
     on vLLM's shared scheduler -- not merely interleaved by the GIL."""
     sink_a, sink_b = [], []
-    registry = {
-        "sink_a": ProbeFactory(SinkProbe, {"sink": sink_a}),
-        "sink_b": ProbeFactory(SinkProbe, {"sink": sink_b}),
-    }
-    router = Router(probe_registry=registry)
+    register_sink(registry, "sink_a", sink_a)
+    register_sink(registry, "sink_b", sink_b)
 
     ep_a = make_extraction_point(name="ep-a", layer=0, position="generated[*]", probe_type="sink_a")
     ep_b = make_extraction_point(name="ep-b", layer=0, position="generated[*]", probe_type="sink_b")
@@ -181,10 +195,10 @@ def test_two_concurrent_requests_share_batching_and_route_correctly(adapter):
     assert [r.token_pos for r in sink_b] == sorted(r.token_pos for r in sink_b)
 
 
-def test_inline_abort_halts_generation_early(adapter):
+def test_inline_abort_halts_generation_early(adapter, registry, router):
     sink = []
-    router = make_router(sink, abort_after=3)
-    ep = make_extraction_point(name="ep-abort", layer=0, position="generated[*]", probe_type="sink")
+    probe_type = register_sink(registry, "sink_abort", sink, abort_after=3)
+    ep = make_extraction_point(name="ep-abort", layer=0, position="generated[*]", probe_type=probe_type)
     request_id = "int-abort"
     adapter.register_extraction(request_id, [ep])
     text = adapter.generate(request_id, "Tell me a long story about", {"max_tokens": 64, "temperature": 0.0}, router)

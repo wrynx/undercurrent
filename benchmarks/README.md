@@ -76,7 +76,7 @@ which adds load time but doesn't affect the measurements.
 **2. HF transformers, gpt2, one small GPU (T4, L4 or A10G).**
 
 ```bash
-python benchmarks/run.py --backend hf --model gpt2 --device cuda \
+python benchmarks/run.py --backend hf --model openai-community/gpt2 --device cuda \
   --scenarios $SCENARIOS --num-prompts 64 \
   --input-len 128 --max-new-tokens 128 --warmup 4 --repeats 5 --seed 0 \
   --out benchmarks/results
