@@ -35,4 +35,4 @@ keywords:
   - llm-inference
 version: "0.1.0"
 # PLACEHOLDER: replace with the actual v0.1.0 release date (YYYY-MM-DD) when tagging.
-date-released: "2026-10-01"
+date-released: "2026-10-02"
