@@ -130,13 +130,13 @@ jobs:
       - name: GPU info
         run: nvidia-smi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history so hatch-vcs can derive the version from tags.
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -275,7 +275,7 @@ jobs:
 
       - name: Upload nightly result
         if: always() && github.event_name == 'schedule'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-result-${{ matrix.vllm }}
           path: ${{ runner.temp }}/nightly-result/result.json
@@ -293,13 +293,13 @@ jobs:
       issues: write
     steps:
       - name: Download per-entry results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: nightly-result-*
           path: nightly-results
 
       - name: Open or update the nightly-failure issue
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
