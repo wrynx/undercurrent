@@ -1,0 +1,481 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wrynx/undercurrent/main/schema/probe-spec.schema.json",
+  "title": "Undercurrent probe spec",
+  "description": "Extraction-point spec for Undercurrent, Wrynx's activation-probing platform: which tensors to capture at which layers and token positions during LLM inference, and which probe consumes them.",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "default": "1",
+      "title": "Version",
+      "type": "string",
+      "description": "Spec format version (currently \"1\")."
+    },
+    "extraction_points": {
+      "items": {
+        "$ref": "#/$defs/ExtractionPointSpec"
+      },
+      "title": "Extraction Points",
+      "type": "array",
+      "description": "The extraction points: what to capture during inference and which probe consumes it."
+    }
+  },
+  "required": [
+    "extraction_points"
+  ],
+  "type": "object",
+  "$defs": {
+    "ExecutionMode": {
+      "description": "'inline': the probe runs on the generation path and can intervene. 'async': the activation is queued and probed off the hot path (trajectory probes only).",
+      "enum": [
+        "inline",
+        "async"
+      ],
+      "title": "ExecutionMode",
+      "type": "string"
+    },
+    "ExtractionPointSpec": {
+      "additionalProperties": false,
+      "description": "One extraction point: what to capture, where, and which probe consumes it.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique name for this extraction point within the spec file.",
+          "pattern": "\\S"
+        },
+        "layers": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "minItems": 1
+            }
+          ],
+          "description": "Layer index (0-based) or a non-empty list of layer indices to capture at."
+        },
+        "tensor_type": {
+          "$ref": "#/$defs/TensorType",
+          "description": "Which tensor to capture at each layer: 'residual_stream' (decoder-layer output), 'attn_out', 'mlp_out', 'kv' (the KV cache), or 'final_norm' (the model's final norm output, after the last decoder layer; distinct from 'residual_stream' at the last layer, which is pre-norm).",
+          "examples": [
+            "residual_stream",
+            "mlp_out",
+            "final_norm"
+          ]
+        },
+        "position": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": "^\\s*(?:-?\\d+|prompt\\[-?\\d+\\](?:[+-]\\d+)?|generated\\[(?:-?\\d+|\\*|\\d+:\\d*)\\](?:[+-]\\d+)?)\\s*$"
+            }
+          ],
+          "description": "Which token position(s) to capture. One of:\n- an integer (or integer string): absolute index into the full prompt + generated sequence, e.g. 5\n- 'prompt[i]': the i-th prompt token; negative counts from the end ('prompt[-1]' is the last prompt token)\n- 'generated[i]': the i-th generated token; 'generated[-1]' is the last one\n- 'generated[*]': every generated token (continuous)\n- 'generated[start:]' or 'generated[start:stop]': generated tokens in [start, stop) (continuous; stop > start)\nAny non-integer form may end in an offset such as '+1' or '-2', e.g. 'prompt[-1]+1' (one token past the last prompt token). 'stride' and 'until' only apply to continuous selectors.",
+          "examples": [
+            "prompt[-1]",
+            "generated[*]",
+            "generated[5:20]",
+            "prompt[-1]+1",
+            5
+          ]
+        },
+        "stride": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Only match every Nth position within a continuous position selector ('generated[*]' or a slice). Must be >= 1."
+        },
+        "until": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UntilKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When a continuous capture stops. Only valid with a continuous position selector."
+        },
+        "probe_type": {
+          "type": "string",
+          "description": "Name of the registered probe that consumes these activations, e.g. 'linear_probe'.",
+          "pattern": "\\S"
+        },
+        "probe_kind": {
+          "$ref": "#/$defs/ProbeKind",
+          "description": "'single_shot': the probe sees one activation and returns a result. 'trajectory': the probe keeps state across positions (required for execution_mode 'async').",
+          "examples": [
+            "single_shot",
+            "trajectory"
+          ]
+        },
+        "execution_mode": {
+          "$ref": "#/$defs/ExecutionMode",
+          "default": "inline",
+          "description": "'inline': the probe runs on the generation path and can intervene. 'async': the activation is queued and probed off the hot path (trajectory probes only)."
+        },
+        "queue_depth": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Bounded queue size for this point's async worker. Only valid with execution_mode 'async'; omit it to use the router's default. Must be >= 1."
+        },
+        "intervention": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InterventionPolicySpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Intervention policy for this point. Omit it to use the router's default. async points may only use the default (mode 'reject')."
+        },
+        "probe_args": {
+          "additionalProperties": true,
+          "type": "object",
+          "description": "Extra constructor keyword arguments for this point's probe, merged over the router's probe_kwargs (this point wins)."
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "minItems": 1
+            }
+          ],
+          "description": "Deprecated: use 'layers' instead.",
+          "deprecated": true,
+          "doNotSuggest": true,
+          "deprecationMessage": "'layer' is deprecated; rename it to 'layers'."
+        },
+        "tensor": {
+          "$ref": "#/$defs/TensorType",
+          "description": "Deprecated: use 'tensor_type' instead.",
+          "deprecated": true,
+          "doNotSuggest": true,
+          "deprecationMessage": "'tensor' is deprecated; rename it to 'tensor_type'."
+        },
+        "every_n": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Deprecated: use 'stride' instead.",
+          "deprecated": true,
+          "doNotSuggest": true,
+          "deprecationMessage": "'every_n' is deprecated; rename it to 'stride'."
+        }
+      },
+      "title": "ExtractionPointSpec",
+      "type": "object",
+      "required": [
+        "name",
+        "position",
+        "probe_type",
+        "probe_kind"
+      ],
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "layers"
+              ]
+            },
+            {
+              "required": [
+                "layer"
+              ]
+            }
+          ]
+        },
+        {
+          "oneOf": [
+            {
+              "required": [
+                "tensor_type"
+              ]
+            },
+            {
+              "required": [
+                "tensor"
+              ]
+            }
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "stride",
+              "every_n"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "execution_mode"
+            ],
+            "properties": {
+              "execution_mode": {
+                "const": "async"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "probe_kind": {
+                "const": "trajectory"
+              },
+              "intervention": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "properties": {
+                      "mode": {
+                        "const": "reject"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "queue_depth"
+            ],
+            "properties": {
+              "queue_depth": {
+                "type": "integer"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "execution_mode"
+            ],
+            "properties": {
+              "execution_mode": {
+                "const": "async"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "stride"
+            ],
+            "properties": {
+              "stride": {
+                "type": "integer"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "position": {
+                "type": "string",
+                "pattern": "^\\s*generated\\[(?:\\*|\\d+:\\d*)\\](?:[+-]\\d+)?\\s*$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "every_n"
+            ],
+            "properties": {
+              "every_n": {
+                "type": "integer"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "position": {
+                "type": "string",
+                "pattern": "^\\s*generated\\[(?:\\*|\\d+:\\d*)\\](?:[+-]\\d+)?\\s*$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "until"
+            ],
+            "properties": {
+              "until": {
+                "type": "string"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "position": {
+                "type": "string",
+                "pattern": "^\\s*generated\\[(?:\\*|\\d+:\\d*)\\](?:[+-]\\d+)?\\s*$"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "InterventionMode": {
+      "description": "'reject' (default): no wait-for-decision contract. 'block_until_signal': the router waits up to timeout_ms for the probe before generation proceeds (requires timeout_ms).",
+      "enum": [
+        "reject",
+        "block_until_signal"
+      ],
+      "title": "InterventionMode",
+      "type": "string"
+    },
+    "InterventionPolicySpec": {
+      "additionalProperties": false,
+      "description": "Intervention policy: whether the router waits for this point's probe before generation proceeds.",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/InterventionMode",
+          "default": "reject",
+          "description": "'reject' (default): no wait-for-decision contract. 'block_until_signal': the router waits up to timeout_ms for the probe before generation proceeds (requires timeout_ms)."
+        },
+        "timeout_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How long to wait for the probe, in milliseconds (>= 1). Required for, and only valid with, mode 'block_until_signal'."
+        },
+        "on_timeout": {
+          "$ref": "#/$defs/TimeoutAction",
+          "default": "continue",
+          "description": "What block_until_signal falls back to when timeout_ms elapses or the probe raises: 'continue' generation or 'abort' it."
+        }
+      },
+      "title": "InterventionPolicySpec",
+      "type": "object",
+      "if": {
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "const": "block_until_signal"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "timeout_ms"
+        ],
+        "properties": {
+          "timeout_ms": {
+            "type": "integer"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "timeout_ms": {
+            "type": "null"
+          },
+          "on_timeout": {
+            "const": "continue"
+          }
+        }
+      }
+    },
+    "ProbeKind": {
+      "description": "'single_shot': the probe sees one activation and returns a result. 'trajectory': the probe keeps state across positions (required for execution_mode 'async').",
+      "enum": [
+        "single_shot",
+        "trajectory"
+      ],
+      "title": "ProbeKind",
+      "type": "string"
+    },
+    "TensorType": {
+      "description": "Which tensor to capture at each layer: 'residual_stream' (decoder-layer output), 'attn_out', 'mlp_out', 'kv' (the KV cache), or 'final_norm' (the model's final norm output, after the last decoder layer; distinct from 'residual_stream' at the last layer, which is pre-norm).",
+      "enum": [
+        "residual_stream",
+        "attn_out",
+        "mlp_out",
+        "kv",
+        "final_norm"
+      ],
+      "title": "TensorType",
+      "type": "string"
+    },
+    "TimeoutAction": {
+      "description": "What block_until_signal falls back to when timeout_ms elapses or the probe raises: 'continue' generation or 'abort' it.",
+      "enum": [
+        "continue",
+        "abort"
+      ],
+      "title": "TimeoutAction",
+      "type": "string"
+    },
+    "UntilKind": {
+      "description": "When a continuous capture stops: at generation end, after a fixed count, or at a stop token.",
+      "enum": [
+        "generation_end",
+        "fixed_count",
+        "stop_token"
+      ],
+      "title": "UntilKind",
+      "type": "string"
+    }
+  }
+}

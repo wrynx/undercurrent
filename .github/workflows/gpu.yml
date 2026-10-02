@@ -1,0 +1,364 @@
+# GPU / vLLM CI: runs the `gpu`-marked tests and the vLLM adapter test
+# directory on a self-hosted GPU runner (labels: self-hosted, linux, gpu).
+#
+# v0.1 status: there is no GPU runner yet, so the workflow is
+# workflow_dispatch-only. The pull_request and schedule triggers below are
+# commented out (a run would queue forever waiting for a runner), and the
+# `run-gpu-tests` label currently does nothing. Before each release a
+# maintainer runs scripts/gpu_check.sh on a GPU machine instead (RELEASING.md);
+# it runs the same tests against the vLLM installed there.
+#
+# To turn GPU CI on once a runner with labels [self-hosted, linux, gpu] is
+# registered: uncomment the triggers below. The job conditions, the nightly
+# matrix and the nightly-failure reporting are still in place for them.
+#
+# When it runs (with all triggers enabled):
+#   - pull_request: only while the PR carries the `run-gpu-tests` label, and
+#     only for branches of this repository (see "Fork safety" below). Each new
+#     push re-runs it while the label stays on.
+#   - workflow_dispatch: pick a vLLM version (`pinned`, `latest`, `main` or an
+#     exact release such as `0.28.1`), and optionally the live Llama test.
+#   - schedule (nightly): matrix over vLLM pinned / latest / main. This is the
+#     early warning for upstream changes to the undocumented vLLM internals the
+#     adapter hooks (undercurrent.adapters.vllm.introspection). A failure opens
+#     or updates a `nightly-failure` issue.
+#
+# Fork safety:
+#   - This uses `pull_request`, never `pull_request_target`: PR code runs with
+#     a read-only token and no secrets. The workflow uses no secrets anyway.
+#   - The `run-gpu-tests` label is only a maintainer gate (only people with
+#     triage/write access can add labels). It is NOT a security boundary: once
+#     labelled, every later push re-runs the job, so a contributor could push
+#     different code after a maintainer reviewed it.
+#   - Self-hosted runners execute whatever code the PR contains, and a
+#     persistent runner keeps state between jobs (pip/HF caches, the work
+#     directory, anything a job leaves running). So the job additionally
+#     requires `head.repo.full_name == github.repository`: PRs from forks never
+#     reach the runner, whatever their labels.
+#   - Trade-off: fork contributors can't get GPU runs on their PR. A maintainer
+#     who has reviewed a fork PR can push it to a branch in this repo (or run
+#     workflow_dispatch on such a branch) to get a GPU run. The alternative --
+#     dropping the same-repo check -- is only acceptable if the runner is
+#     ephemeral (fresh VM/container per job, e.g. `--ephemeral` with
+#     auto-scaling) and isolated from the internal network and other
+#     credentials. Change it only together with such a runner.
+#
+# Install path: every run mirrors the documented production path, where
+# undercurrent is installed INTO an existing vLLM environment. In a fresh venv,
+# vLLM is installed first (bringing its own pinned torch), then
+# `pip install -e ".[dev]"` (not the [vllm] extra), and the job fails if that
+# changed the vllm or torch version. The pinned entry also checks the
+# `undercurrent[vllm]` convenience extra in a second venv.
+name: GPU
+
+on:
+  # Disabled for v0.1 (no GPU runner); see the top of this file.
+  # pull_request:
+  #   types: [labeled, synchronize]
+  workflow_dispatch:
+    inputs:
+      vllm_version:
+        description: "vLLM to test: pinned (pyproject [vllm] extra), latest, main (nightly wheels), or an exact version like 0.28.1"
+        type: string
+        default: pinned
+      run_live_llama:
+        description: "Also run the live Llama content-safety test (the runner must set UNDERCURRENT_LIVE_LLAMA_MODEL)"
+        type: boolean
+        default: false
+  # Disabled for v0.1 (no GPU runner); see the top of this file.
+  # schedule:
+  #   - cron: "0 3 * * *"
+
+permissions:
+  contents: read
+
+# One GPU run per ref at a time. A new push to a labelled PR cancels its
+# running GPU job; nightly and manual runs on the same ref queue instead.
+concurrency:
+  group: gpu-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONUNBUFFERED: "1"
+  # The vLLM integration test downloads `gpt2` from the Hub; `network` tests
+  # are skipped without this.
+  RUN_NETWORK_TESTS: "1"
+
+jobs:
+  gpu-tests:
+    name: GPU tests (vLLM ${{ matrix.vllm }})
+    # - pull_request: same-repo PRs only (fork safety, see top of file), and
+    #   only with the `run-gpu-tests` label. For `labeled` events the label
+    #   just added must be that one, so adding unrelated labels doesn't
+    #   re-trigger a run.
+    # - schedule: only in the upstream repo, so forks with Actions enabled
+    #   don't queue forever waiting for a runner they don't have.
+    if: >-
+      (github.event_name == 'pull_request'
+        && github.event.pull_request.head.repo.full_name == github.repository
+        && contains(github.event.pull_request.labels.*.name, 'run-gpu-tests')
+        && (github.event.action != 'labeled' || github.event.label.name == 'run-gpu-tests'))
+      || (github.event_name == 'schedule' && github.repository_owner == 'wrynx')
+      || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, linux, gpu]
+    timeout-minutes: 120
+    # Only vLLM main may fail without failing the run: it's an early-warning
+    # signal, not a supported target.
+    continue-on-error: ${{ matrix.vllm == 'main' }}
+    strategy:
+      fail-fast: false
+      # One GPU: run matrix entries one after another so they don't compete
+      # for GPU memory if several runner processes share the machine.
+      max-parallel: 1
+      matrix:
+        # Nightly: pinned + latest + main. Manual: the requested version.
+        # Pull requests: pinned only.
+        vllm: >-
+          ${{ fromJSON(
+            github.event_name == 'schedule' && '["pinned", "latest", "main"]'
+            || (github.event_name == 'workflow_dispatch' && format('[{0}]', toJSON(inputs.vllm_version)))
+            || '["pinned"]'
+          ) }}
+    env:
+      VLLM_ENTRY: ${{ matrix.vllm }}
+      # Versions outside SUPPORTED_VLLM (latest, main) would otherwise make the
+      # adapter's runtime version gate raise before any internals are touched;
+      # the point of those entries is to exercise the internals.
+      UNDERCURRENT_ALLOW_UNSUPPORTED_VLLM: ${{ matrix.vllm != 'pinned' && '1' || '' }}
+    steps:
+      - name: GPU info
+        run: nvidia-smi
+
+      - uses: actions/checkout@v4
+        with:
+          # Full history so hatch-vcs can derive the version from tags.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create a fresh venv
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Install vLLM (${{ matrix.vllm }})
+        run: |
+          python -m pip install -U pip
+          case "$VLLM_ENTRY" in
+            pinned)
+              # The tested range lives in exactly one place: the [vllm] extra
+              # in pyproject.toml (kept in sync with SUPPORTED_VLLM by a test).
+              req="$(python -c 'import tomllib; print(next(r for r in tomllib.load(open("pyproject.toml", "rb"))["project"]["optional-dependencies"]["vllm"] if r.startswith("vllm")))')"
+              echo "Pinned requirement from pyproject.toml: $req"
+              python -m pip install "$req"
+              ;;
+            latest)
+              python -m pip install -U vllm
+              ;;
+            main)
+              # Per-commit nightly wheels built from vLLM main.
+              python -m pip install -U --pre vllm --extra-index-url https://wheels.vllm.ai/nightly
+              ;;
+            *)
+              if [[ ! "$VLLM_ENTRY" =~ ^[0-9]+(\.[0-9]+){1,3}([.+-]?[A-Za-z0-9.+]+)?$ ]]; then
+                echo "::error::vllm_version must be pinned, latest, main or an exact version (got '$VLLM_ENTRY')"
+                exit 1
+              fi
+              python -m pip install "vllm==$VLLM_ENTRY"
+              ;;
+          esac
+
+      - name: Record vLLM and torch versions
+        run: |
+          vllm_v="$(python -c 'from importlib.metadata import version; print(version("vllm"))')"
+          torch_v="$(python -c 'from importlib.metadata import version; print(version("torch"))')"
+          echo "vllm  $vllm_v"
+          echo "torch $torch_v"
+          echo "VLLM_BEFORE=$vllm_v" >> "$GITHUB_ENV"
+          echo "TORCH_BEFORE=$torch_v" >> "$GITHUB_ENV"
+          python -m pip freeze --all --exclude-editable > "$RUNNER_TEMP/freeze-before.txt"
+
+      - name: Install undercurrent into the vLLM environment
+        # [dev] only, NOT [vllm]: undercurrent goes into an existing vLLM env.
+        run: python -m pip install -e ".[dev]"
+
+      - name: Check that vLLM and torch were not changed
+        run: |
+          python -m pip freeze --all --exclude-editable > "$RUNNER_TEMP/freeze-after.txt"
+          echo "Packages changed by installing undercurrent:"
+          diff "$RUNNER_TEMP/freeze-before.txt" "$RUNNER_TEMP/freeze-after.txt" || true
+          vllm_v="$(python -c 'from importlib.metadata import version; print(version("vllm"))')"
+          torch_v="$(python -c 'from importlib.metadata import version; print(version("torch"))')"
+          status=0
+          if [ "$vllm_v" != "$VLLM_BEFORE" ]; then
+            echo "::error::Installing undercurrent changed vllm from $VLLM_BEFORE to $vllm_v. Undercurrent must never upgrade or downgrade the user's vLLM; check the dependency ranges in pyproject.toml."
+            status=1
+          fi
+          if [ "$torch_v" != "$TORCH_BEFORE" ]; then
+            echo "::error::Installing undercurrent changed torch from $TORCH_BEFORE to $torch_v. Undercurrent must never change the torch that vLLM pins; check the torch range in pyproject.toml."
+            status=1
+          fi
+          exit "$status"
+
+      - name: Show environment
+        run: |
+          python -m pip list
+          python -c 'import torch; print("torch", torch.__version__, "CUDA", torch.version.cuda, "available:", torch.cuda.is_available())'
+
+      - name: Check CUDA and vLLM are usable
+        # Without CUDA every test below would skip and the job would pass
+        # without testing anything.
+        run: |
+          python -c 'import torch; assert torch.cuda.is_available(), "torch.cuda.is_available() is False on the GPU runner"; print(torch.cuda.get_device_name(0))'
+          python -c 'import vllm; print("vllm", vllm.__version__)'
+
+      - name: pytest -m gpu
+        # The live Llama test is excluded here even if the runner sets
+        # UNDERCURRENT_LIVE_LLAMA_MODEL; it runs only on request (step below).
+        run: >-
+          python -m pytest -v -rs -m gpu
+          --ignore=tests/examples/content_safety/test_live_llama_integration.py
+
+      - name: pytest tests/adapters/vllm (non-GPU tests, against real vLLM)
+        # The GPU tests in this directory already ran above.
+        if: success() || failure()
+        run: python -m pytest -v -rs -m "not gpu" tests/adapters/vllm
+
+      - name: Live Llama content-safety test
+        if: github.event_name == 'workflow_dispatch' && inputs.run_live_llama
+        run: |
+          if [ -z "${UNDERCURRENT_LIVE_LLAMA_MODEL:-}" ]; then
+            echo "::error::run_live_llama needs UNDERCURRENT_LIVE_LLAMA_MODEL set on the runner (a local Llama-family model path or a cached HF id)."
+            exit 1
+          fi
+          python -m pytest -v -rs tests/examples/content_safety/test_live_llama_integration.py
+
+      - name: Check the undercurrent[vllm] extra
+        # The convenience extra must resolve to a vLLM inside SUPPORTED_VLLM.
+        # Separate fresh venv, so it doesn't disturb the environment above.
+        if: matrix.vllm == 'pinned' && (success() || failure())
+        run: |
+          python -m venv "$RUNNER_TEMP/venv-extra"
+          "$RUNNER_TEMP/venv-extra/bin/python" -m pip install -U pip
+          "$RUNNER_TEMP/venv-extra/bin/python" -m pip install -e ".[dev,vllm]"
+          "$RUNNER_TEMP/venv-extra/bin/python" -m pip check
+          "$RUNNER_TEMP/venv-extra/bin/python" -c 'from undercurrent.adapters.vllm.version_check import SUPPORTED_VLLM, check_vllm_version; print("vllm", check_vllm_version(), "within", SUPPORTED_VLLM)'
+          "$RUNNER_TEMP/venv-extra/bin/python" -m pytest -v tests/adapters/vllm/test_version_check.py
+
+      - name: Record result for the nightly report
+        if: always() && github.event_name == 'schedule'
+        env:
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/nightly-result"
+          vllm_v="${VLLM_BEFORE:-unknown (vLLM install failed)}"
+          python - "$RUNNER_TEMP/nightly-result/result.json" <<'EOF'
+          import json, os, sys
+          json.dump(
+              {
+                  "entry": os.environ["VLLM_ENTRY"],
+                  "vllm": os.environ.get("VLLM_BEFORE") or "unknown (vLLM install failed)",
+                  "torch": os.environ.get("TORCH_BEFORE") or "unknown",
+                  "status": os.environ["JOB_STATUS"],
+                  "run_url": os.environ["RUN_URL"],
+              },
+              open(sys.argv[1], "w"),
+          )
+          EOF
+          echo "Recorded: entry=$VLLM_ENTRY vllm=$vllm_v status=$JOB_STATUS"
+
+      - name: Upload nightly result
+        if: always() && github.event_name == 'schedule'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-result-${{ matrix.vllm }}
+          path: ${{ runner.temp }}/nightly-result/result.json
+          retention-days: 7
+
+  report-nightly-failure:
+    name: Report nightly failure
+    needs: gpu-tests
+    if: failure() && github.event_name == 'schedule'
+    # GitHub-hosted: this job never touches the GPU runner. It is the only job
+    # with a write permission, scoped to issues.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    steps:
+      - name: Download per-entry results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-result-*
+          path: nightly-results
+
+      - name: Open or update the nightly-failure issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const label = 'nightly-failure';
+
+            const results = [];
+            if (fs.existsSync('nightly-results')) {
+              for (const dir of fs.readdirSync('nightly-results')) {
+                const file = path.join('nightly-results', dir, 'result.json');
+                if (fs.existsSync(file)) results.push(JSON.parse(fs.readFileSync(file, 'utf8')));
+              }
+            }
+            let failed = results.filter((r) => r.status !== 'success');
+            if (failed.length === 0) {
+              // The job failed before it could record a result (e.g. no runner
+              // or checkout failure).
+              failed = [{ entry: 'unknown', vllm: 'unknown', torch: 'unknown', status: 'failure', run_url: runUrl }];
+            }
+
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+              per_page: 100,
+            });
+
+            for (const r of failed) {
+              const title = `Nightly GPU tests failing (vLLM ${r.vllm})`;
+              const body = [
+                `The nightly GPU run failed for matrix entry \`vllm: ${r.entry}\`.`,
+                '',
+                `- vLLM: \`${r.vllm}\``,
+                `- torch: \`${r.torch}\``,
+                `- Job status: \`${r.status}\``,
+                `- Run: ${r.run_url || runUrl}`,
+                '',
+                'Likely cause: a change in the vLLM internals the adapter hooks. See ' +
+                  '`src/undercurrent/adapters/vllm/introspection.py` and docs/compatibility.md.',
+              ].join('\n');
+              const existing = open.find((i) => !i.pull_request && i.title === title);
+              if (existing) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existing.number,
+                  body,
+                });
+                core.info(`Commented on #${existing.number}: ${title}`);
+              } else {
+                const created = await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title,
+                  body,
+                  labels: [label],
+                });
+                core.info(`Opened #${created.data.number}: ${title}`);
+              }
+            }

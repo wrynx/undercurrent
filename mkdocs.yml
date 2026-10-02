@@ -1,0 +1,121 @@
+site_name: Undercurrent
+site_description: Wrynx's activation-probing platform. See the undercurrent before it surfaces.
+site_author: Wrynx
+site_url: https://wrynx.github.io/undercurrent/
+repo_url: https://github.com/wrynx/undercurrent
+repo_name: wrynx/undercurrent
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; Wrynx. Licensed under Apache-2.0.
+
+# docs/_legacy/ holds the old per-package READMEs (raw material for the
+# docs pages); docs/README.md is the contributor guide for writing docs.
+# Neither is part of the site.
+exclude_docs: |
+  _legacy/
+  README.md
+
+# Reached through links (API reference, adapters page), not the nav.
+not_in_nav: |
+  api-stability.md
+
+# With --strict these warnings fail the build: broken links, broken anchors,
+# and pages that are in docs/ but neither in the nav nor in not_in_nav.
+validation:
+  omitted_files: warn
+  links:
+    not_found: warn
+    anchors: warn
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            members_order: source
+
+# Final. Docs tasks fill in their own page files; they don't edit this nav.
+nav:
+  - Home: index.md                                                              # p3-quickstart
+  - Getting started:
+      - Installation: getting-started/installation.md                           # p3-quickstart
+      - Quickstart: getting-started/quickstart.md                               # p3-quickstart
+  - Concepts:
+      - Architecture: concepts/architecture.md                                  # p3-concepts
+      - Extraction points & specs: concepts/extraction-points.md                # p3-concepts
+      - Position selectors: concepts/position-selectors.md                      # p3-concepts
+      - Probes & lifecycle: concepts/probes.md                                  # p3-concepts
+      - "Execution modes: inline vs async": concepts/execution-modes.md         # p3-concepts
+      - Interventions: concepts/interventions.md                                # p3-concepts
+  - Guides:
+      - Write a custom probe: guides/custom-probe.md                            # p3-custom-probe-guide
+  - Production:
+      - Deploy with vLLM: guides/vllm-deployment.md                             # p3-vllm-guide
+      - Embed in your serving stack: production/embedding.md                    # p3-vllm-guide
+      - Async execution & backpressure: production/async-execution.md           # p3-concepts
+      - Intervention policies & timeouts: production/intervention-policies.md   # p3-concepts
+      - Observation sinks: guides/observation-sinks.md                          # p3-sinks-guide
+      - Metrics: production/metrics.md                                          # p3-sinks-guide
+  - How it works:
+      - The vLLM adapter: internals/vllm-adapter.md                             # p3-vllm-internals-page
+      - Tensor & pipeline parallelism: internals/vllm-parallelism.md            # p3-vllm-internals-page
+  - Examples: examples.md                                                       # p3-docs-scaffold
+  - API reference:
+      - Overview: reference/index.md                                            # p3-api-reference
+      - "undercurrent.model": reference/model.md                                # p3-api-reference
+      - "undercurrent.spec": reference/spec.md                                  # p3-api-reference
+      - "undercurrent.core": reference/core.md                                  # p3-api-reference
+      - "undercurrent.router": reference/router.md                              # p3-api-reference
+      - "undercurrent.sinks": reference/sinks.md                                # p3-api-reference
+      - "undercurrent.adapters": reference/adapters.md                          # p3-api-reference
+      - CLI: reference/cli.md                                                   # p3-api-reference
+  - Compatibility: compatibility.md                                             # p1-dep-pins
+  - Benchmarks: benchmarks.md                                                   # p3-benchmark-page
+  - Comparison: comparison.md                                                   # p3-comparison
+  - About:
+      - Intended use & limitations: about/intended-use.md                       # p3-intended-use
+      - Privacy & data handling: about/privacy.md                               # p3-intended-use
+      - Changelog: about/changelog.md                                           # p3-docs-scaffold
+      - Contributing: about/contributing.md                                     # p3-docs-scaffold

@@ -1,0 +1,67 @@
+# Dependabot: grouped, weekly update PRs for GitHub Actions and the Python
+# dependencies declared in the root pyproject.toml.
+#
+# The labels below must exist in the repository; Dependabot doesn't create
+# custom labels.
+version: 2
+updates:
+  # Covers every workflow in .github/workflows/.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # Reads [project] dependencies, optional-dependencies and build-system
+  # requires from pyproject.toml. There is no lock file, so a PR only appears
+  # when a new release falls outside a declared range (the range is widened).
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "pip"
+    # A dependency goes into the first group whose patterns match it.
+    groups:
+      # Contributor tooling: tests, lint, typing, docs, build and release.
+      dev-tools:
+        patterns:
+          - "pytest*"
+          - "ruff"
+          - "mypy"
+          - "types-*"
+          - "pre-commit"
+          - "jsonschema"
+          - "mkdocs*"
+          - "mktestdocs"
+          - "pymdown-extensions"
+          - "build"
+          - "twine"
+          - "hatchling"
+          - "hatch-vcs"
+      runtime:
+        patterns:
+          - "*"
+        # vllm, torch and transformers are deliberately left out of every
+        # group, so each gets its own PR instead of riding along with routine
+        # bumps. Their ranges are set on purpose (see docs/compatibility.md):
+        # the vLLM adapter hooks undocumented vLLM internals and the HF adapter
+        # hooks transformers model structure, so a new vLLM minor or
+        # transformers major can break probing even when CPU CI is green.
+        # Before merging one of these PRs, run scripts/gpu_check.sh on a GPU
+        # machine with the new version (no GPU CI for v0.1). A vllm bump must also update
+        # SUPPORTED_VLLM in src/undercurrent/adapters/vllm/version_check.py
+        # and docs/compatibility.md in the same PR.
+        exclude-patterns:
+          - "vllm"
+          - "torch"
+          - "transformers"

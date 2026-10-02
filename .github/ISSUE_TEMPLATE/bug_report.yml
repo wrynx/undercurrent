@@ -1,0 +1,126 @@
+name: Bug report
+description: Something in Undercurrent crashes, hangs or returns wrong results.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        - **Security vulnerabilities must not be reported here.** Use [private vulnerability reporting](https://github.com/wrynx/undercurrent/security/advisories/new) or email security@wrynx.com (see `SECURITY.md`).
+        - **Questions and usage help** belong in [Discussions](https://github.com/wrynx/undercurrent/discussions).
+
+        Undercurrent hooks into model internals, and vLLM internals change between releases, so most bugs depend on the exact environment. Reports without the environment output below are hard to act on.
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Existing issues
+      options:
+        - label: I have searched the [existing issues](https://github.com/wrynx/undercurrent/issues?q=is%3Aissue) and this bug has not been reported yet.
+          required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      description: Which inference backend were you using?
+      options:
+        - Hugging Face transformers (HF adapter)
+        - vLLM
+        - None (spec / router / sinks only, no model)
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction (code)
+      description: |
+        The smallest Python script that reproduces the problem. Prefer a small public model (e.g. `gpt2`) if the bug reproduces with it.
+        Remove secrets, private model names and prompt data you cannot share.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: spec
+    attributes:
+      label: Extraction spec (YAML)
+      description: The extraction-spec YAML you used, if any. Paste "n/a" if you built the spec in Python (include that code above).
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead (wrong values, missing results, hang, crash, ...).
+    validations:
+      required: true
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Traceback / logs
+      description: The full traceback and any relevant log output. This is automatically formatted as code, so no backticks are needed.
+      render: shell
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        Run this in the environment where the bug happens and paste the full output. It works even if vLLM or transformers are not installed.
+
+        ```sh
+        python -c "
+        import platform, sys
+        from importlib import metadata
+        def ver(p):
+            try:
+                return metadata.version(p)
+            except metadata.PackageNotFoundError:
+                return 'not installed'
+        print('OS:', platform.platform())
+        print('Python:', sys.version.split()[0])
+        for p in ('undercurrent', 'torch', 'transformers', 'vllm', 'pydantic'):
+            print(p + ':', ver(p))
+        try:
+            import torch
+            print('torch CUDA build:', torch.version.cuda, '| CUDA available:', torch.cuda.is_available())
+            print('GPUs:', [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())] or 'none')
+        except Exception as e:
+            print('torch info unavailable:', repr(e))
+        "
+        nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader 2>/dev/null || echo 'nvidia-smi: not available'
+        ```
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: parallelism
+    attributes:
+      label: Parallelism (vLLM)
+      description: Tensor-parallel and pipeline-parallel sizes, if using vLLM. Leave empty for HF or single-GPU runs.
+      placeholder: "e.g. tensor_parallel_size=2, pipeline_parallel_size=1"
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: The model (Hugging Face ID or architecture) you were probing, plus dtype/quantization if relevant.
+      placeholder: "e.g. meta-llama/Llama-3.1-8B-Instruct, bfloat16"
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Anything else that might help, e.g. whether it worked in an earlier version, Docker image, serving setup.

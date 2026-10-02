@@ -1,0 +1,160 @@
+# Builds the docs site on every pull request and deploys it to GitHub Pages
+# (https://wrynx.github.io/undercurrent/) from main. Pages must be enabled in
+# the repository settings with "Source: GitHub Actions".
+#
+# Jobs:
+# - build: `mkdocs build --strict` (broken internal links and anchors fail it;
+#   see `validation:` in mkdocs.yml).
+# - snippets: runs every ```python block in docs/ and README.md
+#   (tests/docs/test_doc_snippets.py).
+# - deploy: publishes the site from main once build and snippets pass.
+# - links: checks external links with lychee. Weekly and on PRs that touch
+#   the docs; advisory on PRs (external sites are flaky), blocking on the
+#   schedule.
+name: Docs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  # CPU-only torch wheels: nothing here needs CUDA.
+  TORCH_CPU_INDEX: https://download.pytorch.org/whl/cpu
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so hatch-vcs can derive the version from tags.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[docs]" --extra-index-url "$TORCH_CPU_INDEX"
+
+      - name: Build
+        run: mkdocs build --strict
+
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  snippets:
+    name: Doc snippets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Cache Hugging Face Hub downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-docs-${{ hashFiles('docs/**/*.md', 'README.md') }}
+          restore-keys: hf-docs-
+
+      - name: Install
+        run: pip install -e ".[docs,dev]" --extra-index-url "$TORCH_CPU_INDEX"
+
+      - name: Run the python blocks
+        env:
+          # The pages download gpt2 from the Hub; network tests are opt-in.
+          RUN_NETWORK_TESTS: "1"
+        run: pytest tests/docs -m "slow" -v --durations=10
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, snippets]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # One deployment at a time; a newer push to main supersedes a queued one
+    # but never cancels a deployment that's already running.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  links:
+    name: External links
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # Advisory on PRs, blocking on the weekly run.
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Did this PR touch the docs?
+        id: changed
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD \
+              | grep -qE '^(docs/|README\.md$|mkdocs\.yml$|\.lycheeignore$|src/)'; then
+            # src/ too: docstrings render into the API reference pages.
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.changed.outputs.docs == 'true'
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Build the site
+        if: steps.changed.outputs.docs == 'true'
+        run: |
+          pip install -e ".[docs]" --extra-index-url "$TORCH_CPU_INDEX"
+          mkdocs build --strict
+
+      - name: Check links
+        if: steps.changed.outputs.docs == 'true'
+        uses: lycheeverse/lychee-action@v2
+        with:
+          # site/404.html uses root-absolute /undercurrent/ links that only
+          # resolve on the deployed site; the other pages cover the same nav.
+          # .lycheeignore lists the excluded URLs and why.
+          args: >-
+            --no-progress
+            --max-retries 3
+            --accept '200..=299,429'
+            --exclude-path site/404.html
+            'site/**/*.html'
+            README.md
+          fail: true
+        env:
+          # Authenticated GitHub requests avoid rate limiting on github.com links.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

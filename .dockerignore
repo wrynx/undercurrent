@@ -1,0 +1,45 @@
+# Keeps the demo image's build context from dragging in local dev state
+# and private artifacts -- see examples/content_safety/Dockerfile.
+# Superset of the relevant entries in the root .gitignore.
+.git
+.venv
+venv
+.env
+.env.*
+!.env.example
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.ipynb_checkpoints
+build
+dist
+site
+.coverage*
+htmlcov
+coverage.xml
+
+# Local tooling and agent worktrees
+.claude/worktrees
+.claude/settings.local.json
+worktrees
+.idea
+.vscode
+**/.DS_Store
+
+# Run artefacts
+**/*.ndjson
+benchmarks/results
+**/outputs/train_probe
+
+# Trained checkpoints are private, per-user weights -- mounted at
+# `docker run` time (see the Dockerfile's usage comment), never baked into
+# an image layer.
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.gguf

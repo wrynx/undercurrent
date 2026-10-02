@@ -1,0 +1,52 @@
+name: Feature request
+description: Propose a new feature or an improvement to an existing one.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! For open-ended ideas or "how do I ...?" questions, please start a thread in [Discussions](https://github.com/wrynx/undercurrent/discussions) first.
+
+        Requests for a new inference engine adapter (SGLang, TGI, llama.cpp, ...) have their own form: **New engine adapter**.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and why is it hard or impossible today? Describe the use case rather than a solution.
+      placeholder: "I'm always frustrated when ..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API
+      description: How would you like to use it? A short code sketch (and spec YAML, if relevant) helps a lot.
+      render: python
+      placeholder: |
+        from undercurrent import ProbedModel
+
+        model = ProbedModel.from_pretrained("gpt2", spec="spec.yaml")
+        ...
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use today, or other designs you considered.
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you like to contribute this?
+      options:
+        - Yes, I'd like to open a PR
+        - Maybe, with some guidance
+        - No
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Links, papers, related issues or anything else.

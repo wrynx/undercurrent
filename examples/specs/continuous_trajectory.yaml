@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/wrynx/undercurrent/main/schema/probe-spec.schema.json
+version: "1"
+extraction_points:
+  # Continuous trajectory probe: capture MLP output at layers 4, 8, and 12
+  # for every 2nd generated token, tracking probe state across the whole
+  # generation, run asynchronously off the hot path.
+  - name: generation_trajectory
+    layers: [4, 8, 12]
+    tensor_type: mlp_out
+    position: "generated[*]"
+    stride: 2               # equivalent alias: every_n: 2
+    until: generation_end
+    probe_type: trajectory_probe
+    probe_kind: trajectory
+    execution_mode: async
+    queue_depth: 8

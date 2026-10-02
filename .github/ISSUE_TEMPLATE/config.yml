@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or usage help
+    url: https://github.com/wrynx/undercurrent/discussions
+    about: Ask questions and discuss ideas in GitHub Discussions. Issues are for bugs and concrete proposals.
+  - name: Security vulnerability
+    url: https://github.com/wrynx/undercurrent/security/advisories/new
+    about: Report security vulnerabilities privately (or email security@wrynx.com), please do not open a public issue. See SECURITY.md.

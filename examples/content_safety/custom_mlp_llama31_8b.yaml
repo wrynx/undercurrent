@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/wrynx/undercurrent/main/schema/probe-spec.schema.json
+version: "1"
+# Targets meta-llama/Llama-3.1-8B, a GATED Hugging Face repo: accept its
+# license on the model page and run `huggingface-cli login` first. For an
+# ungated model, start from content_safety_gpt2.yaml instead.
+extraction_points:
+  # inline single_shot content-safety check on the prompt: capture the
+  # model-level final norm's output (Llama-3.1-8B's trailing RMSNorm,
+  # applied once after its 32nd and last decoder layer -- 0-indexed decoder
+  # layers are 0..31, so final_norm is tagged layer=32, one past the last
+  # decoder-layer index) at the last prompt token, and classify it via
+  # CustomMLPProbe's externally-trained checkpoint before generation
+  # starts. The checkpoint this spec expects is trained on
+  # `transformers`' `outputs.hidden_states[-1]` (equivalently
+  # `outputs.last_hidden_state`) -- the POST-final-norm hidden state, not
+  # `residual_stream` at layer 31, which would be the raw last-decoder-layer
+  # output BEFORE that trailing norm is applied. Using `residual_stream`
+  # here (at any layer) feeds the classifier an input distribution it was
+  # never trained on.
+  - name: prompt_safety_check
+    layers: 32
+    tensor_type: final_norm
+    position: "prompt[-1]"
+    probe_type: custom_mlp_safety_check
+    probe_kind: single_shot
+    execution_mode: inline

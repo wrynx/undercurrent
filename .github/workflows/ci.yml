@@ -1,0 +1,269 @@
+# Main CI: lint, type-check and the CPU test suite on every push to main and
+# every pull request. Nothing here installs vLLM or CUDA torch: the vLLM
+# integration test skips (vllm isn't importable) and `gpu` / `network` tests
+# are deselected. GPU/vLLM runs live in their own workflow.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or PR cancels the run in progress.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  # The base install includes torch; a plain PyPI install would pull CUDA
+  # wheels on Linux. On macOS the PyPI wheels are CPU-only already, so the
+  # extra index is harmless there.
+  TORCH_CPU_INDEX: https://download.pytorch.org/whl/cpu
+  # Fail fast if a test that isn't marked `network` tries to reach the Hub.
+  HF_HUB_OFFLINE: "1"
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install ruff
+        # Only ruff, at the version pinned in pyproject.toml's `dev` extra
+        # (kept in step with the ruff-pre-commit rev), so this job stays fast.
+        run: |
+          ruff_req="$(python -c 'import tomllib; print(next(r for r in tomllib.load(open("pyproject.toml", "rb"))["project"]["optional-dependencies"]["dev"] if r.startswith("ruff")))')"
+          python -m pip install "$ruff_req"
+
+      - name: ruff check
+        run: ruff check --output-format=github .
+
+      - name: ruff format --check
+        run: ruff format --check --diff .
+
+  typecheck:
+    name: Type-check (mypy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so hatch-vcs can derive the version from tags.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: python -m pip install -e ".[dev]" --extra-index-url "$TORCH_CPU_INDEX"
+
+      - name: mypy
+        # Files, strictness and target version (3.10) come from [tool.mypy].
+        run: mypy
+
+  test:
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          - os: macos-latest
+            python-version: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so hatch-vcs can derive the version from tags.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: python -m pip install -e ".[dev]" --extra-index-url "$TORCH_CPU_INDEX"
+
+      - name: Show environment
+        run: python -m pip list
+
+      - name: pytest
+        # CPU-only and offline. Includes the HF adapter tests (tiny in-process
+        # GPT-2), the pure-Python vLLM adapter tests and tests/examples/**.
+        # Coverage is measured on one entry only (Linux, 3.12; see the upload
+        # step below), so the other entries don't pay for tracing.
+        env:
+          COVERAGE_ARGS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '--cov --cov-report=xml --cov-report=term' || '' }}
+        run: python -m pytest -q -m "not gpu and not network" $COVERAGE_ARGS
+
+      # --- p4-coverage: upload coverage from the Linux 3.12 entry only ---
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          # Tokenless uploads work for public repos. A CODECOV_TOKEN secret is
+          # needed only while the repo is private (pass it as `token:`); until
+          # then the upload fails softly and doesn't fail CI.
+          fail_ci_if_error: false
+
+  # --- jobs added by later tasks (wheel smoke test, coverage) go below ---
+
+  # --- p6-polish: the declared dependency floors ---
+  # The test matrix above installs the newest releases. This job installs the
+  # minimum versions pyproject.toml declares, on the oldest supported Python,
+  # so a floor that no longer works fails here instead of in a user's
+  # environment. Keep the pins in step with `dependencies` in pyproject.toml
+  # and the "Declared ranges" table in docs/compatibility.md.
+  floors:
+    name: Test (dependency floors, Python 3.10)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so hatch-vcs can derive the version from tags.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install the declared minimums
+        # The constraints file keeps the later installs from upgrading a floor.
+        run: |
+          cat > "$RUNNER_TEMP/floors.txt" <<'EOF'
+          torch==2.1.*
+          transformers==4.40.*
+          pydantic==2.0.*
+          PyYAML==6.0.*
+          numpy==1.23.*
+          packaging==22.*
+          EOF
+          python -m pip install -r "$RUNNER_TEMP/floors.txt" --extra-index-url "$TORCH_CPU_INDEX"
+          # --no-deps: the dependencies are the floors above, not the newest
+          # releases. Only the test tools are added on top.
+          python -m pip install -e ".[dev]" --no-deps
+          python -m pip install pytest "jsonschema>=4.18,<5" -c "$RUNNER_TEMP/floors.txt"
+          python -m pip check
+
+      - name: Show environment
+        run: python -m pip list
+
+      - name: pytest
+        # Tests that compare against files generated with newer releases (the
+        # committed JSON Schema) or that need a newer torch (the content-safety
+        # demo's checkpoint loading) skip themselves here.
+        run: python -m pytest -q -m "not gpu and not network and not slow"
+
+  # --- p4-wheel-smoke-ci: build the sdist + wheel and smoke-test the artefacts ---
+  # Catches packaging mistakes the editable installs above hide: missing
+  # subpackages or package data, demo code leaking into the wheel, broken
+  # entry points. `wheel-smoke` installs the built artefacts into a fresh venv
+  # (no editable install, no extras) and runs scripts/smoke_test_wheel.sh from
+  # outside the checkout, so `undercurrent` can only come from site-packages.
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so hatch-vcs can derive the version from tags.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: python -m pip install build twine
+
+      - name: Build
+        run: python -m build --outdir dist/ .
+
+      - name: twine check
+        run: twine check --strict dist/*
+
+      - name: List artefacts
+        run: |
+          ls -l dist/
+          python -m zipfile -l dist/*.whl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  wheel-smoke:
+    name: Wheel smoke (${{ matrix.artefact }}, Python ${{ matrix.python-version }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+        artefact: [wheel, sdist]
+    env:
+      # The base install includes torch; every pip install the smoke script
+      # does (fresh venv, and the sdist's isolated build) takes CPU wheels.
+      PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cpu
+    steps:
+      # Only the smoke script: the source tree must not be importable.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/smoke_test_wheel.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: ${{ runner.temp }}/dist
+
+      - name: Smoke-test the ${{ matrix.artefact }}
+        # Runs from $RUNNER_TEMP, not the checkout. The script installs the
+        # artefact (no extras) into a fresh venv, prints and checks
+        # `undercurrent.__file__` is in that venv's site-packages, checks the
+        # wheel has no examples/ or probing_* modules, runs a CPU Router and
+        # tiny-GPT-2 HFEngineAdapter pipeline, `--help` for console scripts,
+        # and checks the vllm.general_plugins entry point without vLLM.
+        working-directory: ${{ runner.temp }}
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/smoke_test_wheel.sh" \
+            --dist "$RUNNER_TEMP/dist" \
+            --install "${{ matrix.artefact }}" \
+            --python python

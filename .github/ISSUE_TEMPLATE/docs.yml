@@ -1,0 +1,41 @@
+name: Documentation
+description: Report missing, wrong or unclear documentation.
+title: "[Docs]: "
+labels: ["documentation", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve the docs! Small fixes (typos, broken links) can go straight to a pull request.
+  - type: input
+    id: location
+    attributes:
+      label: Page URL or file
+      description: The docs page URL, or the file path in the repository (e.g. `README.md`, `docs/compatibility.md`, a docstring).
+      placeholder: "https://... or docs/..."
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Type of problem
+      options:
+        - Incorrect or outdated
+        - Missing
+        - Unclear or confusing
+        - Broken example, code snippet or link
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's wrong or missing?
+      description: Quote the relevant text if possible, and describe the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested fix
+      description: Optional. What should it say instead?

@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/wrynx/undercurrent/main/schema/probe-spec.schema.json
+version: "1"
+extraction_points:
+  # Classic single-token probe: capture the residual stream at layer 12,
+  # at the last prompt token, and run it through a single-shot linear
+  # probe immediately (inline).
+  - name: last_prompt_token_probe
+    layers: 12
+    tensor_type: residual_stream
+    position: "prompt[-1]"
+    probe_type: linear_probe
+    probe_kind: single_shot
+    execution_mode: inline

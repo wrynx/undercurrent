@@ -1,0 +1,38 @@
+# Citation metadata for Undercurrent (https://citation-file-format.github.io/).
+# GitHub reads this file to show the "Cite this repository" button.
+#
+# Keep title, license, keywords and URLs in sync with pyproject.toml.
+# `version` and `date-released` are not derived from git tags: update both by
+# hand in the release commit before tagging vX.Y.Z.
+cff-version: 1.2.0
+message: "If you use Undercurrent in your research or software, please cite it using the metadata from this file."
+type: software
+title: "Undercurrent"
+abstract: >-
+  Undercurrent is Wrynx's activation-probing platform for LLM inference:
+  production-grade activation probing and inline intervention for LLM
+  inference (Hugging Face, vLLM). You declare which activations to capture
+  during generation in a YAML spec, run probes against them (single-shot
+  classifiers, running trajectory scores), and choose per extraction point
+  whether a probe runs inline, where it can intervene and abort generation,
+  or async, where it observes out-of-band without blocking the response.
+authors:
+  - name: "Wrynx"
+repository-code: "https://github.com/wrynx/undercurrent"
+url: "https://github.com/wrynx/undercurrent"
+license: Apache-2.0
+keywords:
+  - undercurrent
+  - llm
+  - interpretability
+  - activation-probing
+  - probes
+  - ai-safety
+  - vllm
+  - transformers
+  - guardrails
+  - mechanistic-interpretability
+  - llm-inference
+version: "0.1.0"
+# PLACEHOLDER: replace with the actual v0.1.0 release date (YYYY-MM-DD) when tagging.
+date-released: "2026-10-01"

@@ -1,0 +1,67 @@
+name: New engine adapter
+description: Propose support for another inference engine (e.g. SGLang, TGI, llama.cpp).
+title: "[Adapter]: "
+labels: ["adapter", "enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Undercurrent talks to inference engines through the `EngineAdapter` interface (`undercurrent.adapters.base`). Before proposing an adapter, please read the **`EngineAdapter` checklist in [`CONTRIBUTING.md`](https://github.com/wrynx/undercurrent/blob/main/CONTRIBUTING.md)**; the questions below follow it.
+
+        Answer what you know. "Unknown" is a fine answer, and links to engine source code are very welcome.
+  - type: input
+    id: engine
+    attributes:
+      label: Engine
+      description: Name and repository of the inference engine.
+      placeholder: "e.g. SGLang (https://github.com/sgl-project/sglang)"
+    validations:
+      required: true
+  - type: input
+    id: engine-version
+    attributes:
+      label: Engine version(s)
+      description: The version or version range the adapter should target. Note how often its internals change.
+      placeholder: "e.g. 0.5.x"
+    validations:
+      required: true
+  - type: textarea
+    id: hook-points
+    attributes:
+      label: Activation hook points
+      description: |
+        Where can activations be captured? E.g. PyTorch forward hooks on decoder layers, custom model classes, a plugin/callback API, or none (C++ engine).
+        Which tensors are reachable (residual stream, attention output, MLP output, logits), and in what layout (flattened tokens vs. padded batch)?
+    validations:
+      required: true
+  - type: textarea
+    id: batching
+    attributes:
+      label: Batching and scheduling model
+      description: |
+        How does the engine batch requests (continuous batching, chunked prefill, paged KV cache, speculative decoding)?
+        How can a captured activation row be mapped back to its request and token position? Does it run multiple processes (TP/PP workers)?
+    validations:
+      required: true
+  - type: textarea
+    id: abort
+    attributes:
+      label: Abort / intervention mechanism
+      description: How can a running request be stopped or modified mid-generation (e.g. abort API, stop flags, logits processors)? Can that be done from inside a hook?
+    validations:
+      required: true
+  - type: textarea
+    id: links
+    attributes:
+      label: Links
+      description: Relevant engine docs, source files, existing integrations, or prior art.
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you like to build this adapter?
+      options:
+        - Yes, I'd like to open a PR
+        - Maybe, with some guidance
+        - No, I'm requesting it
+    validations:
+      required: true

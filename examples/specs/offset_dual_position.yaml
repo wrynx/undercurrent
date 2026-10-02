@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/wrynx/undercurrent/main/schema/probe-spec.schema.json
+version: "1"
+extraction_points:
+  # Offset-based dual-position probe: "read position b at token b+1" --
+  # capture attention output at layer 6, evaluated one token after the
+  # last prompt token (i.e. at the first generated token), so the probe
+  # can compare what the model wrote against what it had just read.
+  - name: read_position_at_next_token
+    layers: 6
+    tensor_type: attn_out
+    position: "prompt[-1]+1"
+    probe_type: dual_position_probe
+    probe_kind: single_shot
+    execution_mode: inline

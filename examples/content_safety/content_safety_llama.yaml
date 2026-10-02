@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/wrynx/undercurrent/main/schema/probe-spec.schema.json
+version: "1"
+# Written for a Llama-family model (e.g. meta-llama/Llama-3.1-8B -- a GATED
+# Hugging Face repo: accept its license on the model page and run
+# `huggingface-cli login` first). For an ungated model, use
+# content_safety_gpt2.yaml instead.
+extraction_points:
+  # single_shot content-safety check on the prompt itself: capture the
+  # residual stream at layer 16 (of a Llama-family model) at the last
+  # prompt token, and classify it inline before generation starts.
+  - name: prompt_safety_check
+    layers: 16
+    tensor_type: residual_stream
+    position: "prompt[-1]"
+    probe_type: content_safety_single_token
+    probe_kind: single_shot
+    execution_mode: inline
+
+  # trajectory content-safety check across generation: capture the residual
+  # stream at layer 16 for every generated token, tracking a running safety
+  # score off the hot path (async) so an adapter can abort generation the
+  # moment the router surfaces an action=abort signal.
+  - name: generation_safety_trajectory
+    layers: 16
+    tensor_type: residual_stream
+    position: "generated[*]"
+    until: generation_end
+    probe_type: content_safety_trajectory
+    probe_kind: trajectory
+    execution_mode: async
+    queue_depth: 16

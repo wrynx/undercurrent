@@ -1,0 +1,294 @@
+[build-system]
+requires = ["hatchling>=1.27", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "undercurrent"
+dynamic = ["version"]
+description = "Undercurrent: production-grade LLM activation probing and intervention. Works with Hugging Face Transformers and vLLM."
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+# PEP 639 SPDX expression (needs hatchling>=1.27). Don't add a `License ::`
+# classifier: PEP 639 forbids combining it with an SPDX `license`.
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Wrynx" }]
+maintainers = [{ name = "Wrynx" }]
+keywords = [
+    "undercurrent",
+    "llm",
+    "interpretability",
+    "activation-probing",
+    "probes",
+    "ai-safety",
+    "vllm",
+    "transformers",
+    "guardrails",
+    "mechanistic-interpretability",
+    "llm-inference",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    # Ships src/undercurrent/py.typed (PEP 561).
+    "Typing :: Typed",
+]
+# The base install includes the Hugging Face backend, so `pip install
+# undercurrent` is enough for the quickstart.
+#
+# Range policy (see docs/compatibility.md): a floor where the code needs one;
+# a next-minor ceiling for dependencies whose internals we hook (vllm), a
+# next-major ceiling otherwise -- except torch and numpy, see below.
+dependencies = [
+    "pydantic>=2,<3",
+    "PyYAML>=6,<7",
+    # Deliberately a loose floor and NO ceiling: every vLLM release pins an
+    # exact torch version, and undercurrent is meant to be installed into an
+    # existing vLLM env/image. Any upper bound here would eventually fight
+    # that pin and make pip downgrade or refuse. Same for CUDA builds: use the
+    # torch your toolchain or image provides.
+    "torch>=2.1",
+    # 4.40 floor: ProbingStoppingCriteria returns a per-sequence BoolTensor,
+    # the StoppingCriteria contract since transformers 4.39. `<6`: the HF
+    # adapter hooks model structure (decoder-layer attribute paths, layer
+    # output shapes) that a major release may reorganise, as 5.x did.
+    "transformers>=4.40,<6",
+    # Not imported directly (torch/transformers need it). No ceiling, so we
+    # never block a numpy that torch itself accepts.
+    "numpy>=1.23",
+    # Runtime vLLM version gate (undercurrent.adapters.vllm.version_check).
+    "packaging>=22",
+]
+
+[project.optional-dependencies]
+# Convenience only. The documented production path is installing
+# undercurrent into your existing vLLM environment or image.
+vllm = [
+    # Next-minor ceiling: the adapter hooks undocumented vLLM internals. Bump
+    # only after the GPU CI passes against the new minor, together with
+    # SUPPORTED_VLLM in src/undercurrent/adapters/vllm/version_check.py and
+    # docs/compatibility.md.
+    "vllm>=0.28,<0.29",
+]
+# Contributor-only: builds the docs site (mkdocs.yml).
+docs = [
+    # <2: MkDocs 2.0 drops the plugin system mkdocstrings and Material rely on.
+    "mkdocs>=1.6,<2",
+    "mkdocs-material",
+    "mkdocstrings[python]",
+    "pymdown-extensions",
+    # Executes ```python blocks in the docs (p3-docs-ci-checks).
+    "mktestdocs",
+]
+dev = [
+    "pytest>=7",
+    # Coverage in CI: `pytest --cov --cov-report=xml`. Not in addopts, so a
+    # plain `pytest` works without it.
+    "pytest-cov>=5",
+    "ruff>=0.16,<0.17",
+    "pre-commit>=4",
+    # Validates example specs against schema/probe-spec.schema.json in tests.
+    "jsonschema>=4.18,<5",
+    "mypy>=1.11",
+    "types-PyYAML",
+    # Execute notebooks/*.ipynb in tests/notebooks/.
+    "nbclient>=0.10",
+    "nbformat>=5.10",
+    "ipykernel>=6",
+]
+
+[project.urls]
+Homepage = "https://github.com/wrynx/undercurrent"
+Source = "https://github.com/wrynx/undercurrent"
+Issues = "https://github.com/wrynx/undercurrent/issues"
+Changelog = "https://github.com/wrynx/undercurrent/blob/main/CHANGELOG.md"
+# GitHub Pages site; goes live with p3-docs-scaffold.
+Documentation = "https://wrynx.github.io/undercurrent/"
+
+[project.scripts]
+undercurrent = "undercurrent.cli:main"
+
+[project.entry-points."vllm.general_plugins"]
+undercurrent = "undercurrent.adapters.vllm.plugin:register"
+
+# Versioning: the version comes from git tags via hatch-vcs (setuptools-scm).
+# Tags are `vX.Y.Z` (e.g. `v0.1.0`, pre-releases `v0.2.0rc1`); releasing a
+# version means pushing its tag. Untagged commits get a dev version such as
+# `0.1.dev12+g1a2b3c4`. Builds without git metadata (Docker contexts, copied
+# trees) fall back to `0.0`; set the version explicitly with e.g.
+# `SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0 python -m build`. (The fallback is
+# also the base for untagged history, so `0.0` -- setuptools-scm's own default
+# -- keeps pre-first-tag dev versions as `0.1.devN+g...`.) sdists carry the
+# version in PKG-INFO, so building from an sdist needs no git. The build writes
+# src/undercurrent/_version.py (gitignored); `undercurrent.__version__` reads it.
+[tool.hatch.version]
+source = "vcs"
+raw-options = { fallback_version = "0.0" }
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/undercurrent/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/undercurrent"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src",
+    "tests",
+    "examples",
+    # Read by tests (doc snippets, notebooks, the benchmark harness, the GPU
+    # check script, the committed JSON Schema), so the tests run from an
+    # unpacked sdist.
+    "benchmarks",
+    "docs",
+    "notebooks",
+    "scripts",
+    "schema",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE",
+    "pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `pythonpath = ["."]` makes the root `tests` package importable under its
+# canonical name, so helpers are imported as `from tests.<sub>._helpers import X`.
+pythonpath = ["."]
+addopts = "--import-mode=importlib --strict-markers"
+markers = [
+    "gpu: needs a CUDA GPU (auto-skipped when torch or CUDA is unavailable)",
+    "slow: takes more than ~10s",
+    "network: downloads from the Hugging Face Hub or the internet (skipped unless RUN_NETWORK_TESTS=1)",
+]
+
+# Coverage: opt-in with `pytest --cov` (CI passes it on one matrix entry and
+# uploads coverage.xml to Codecov). No fail_under threshold yet.
+[tool.coverage.run]
+source = ["undercurrent"]
+branch = true
+# No file-level `omit`: every module, including the vLLM adapter and its
+# worker extension, is partly exercised by the CPU tests (fake engines and
+# model runners), and omitting a file hides that. Code that only runs against
+# a live vLLM engine (VLLMEngineAdapter.load_model / _agenerate) is excluded
+# per function with `# pragma: no cover - needs a live vLLM engine`; the GPU
+# workflow exercises it. Add an `omit` entry only for a module that no CPU
+# test can import or run, with a comment saying why.
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "@(abc\\.)?abstractmethod",
+    "^\\s*\\.\\.\\.$",
+]
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[tool.ruff]
+target-version = "py310"
+# 120, not 100: only 13 existing lines exceed 120 (338 exceed 100), so the
+# one-time format pass stays small and the long explanatory comments that are
+# house style don't get rewrapped.
+line-length = 120
+src = ["src", "tests"]
+extend-exclude = ["docs/_legacy"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "C4", "SIM", "PIE", "RUF"]
+ignore = [
+    # Line length is the formatter's job; the few comment/string lines it
+    # can't wrap aren't worth a lint error.
+    "E501",
+    # `zip(..., strict=True)` changes behaviour (raises on length mismatch).
+    # Opting in is a per-call design decision, not a style fix.
+    "B905",
+    # "Return the condition directly" / "use a ternary" collapse guard-clause
+    # chains (e.g. Position.matches) that read better as explicit branches.
+    "SIM103",
+    "SIM108",
+    # `__all__` lists are curated and grouped by topic, not alphabetised.
+    "RUF022",
+    # Class-level constant tables (e.g. `_ACTIVATIONS = {...}`) are read-only
+    # by convention; annotating each as ClassVar is noise.
+    "RUF012",
+]
+# Rule codes used in existing `# noqa:` markers that we don't enable (blind
+# except, function naming). Listed so RUF100 keeps the markers as intent
+# documentation instead of deleting them.
+external = ["BLE001", "N802"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["undercurrent"]
+
+[tool.ruff.lint.per-file-ignores]
+# pytest idioms: `assert False, msg` in unreachable branches (pytest rewrites
+# asserts and tests never run under -O), and bare attribute access inside
+# `pytest.raises` to trigger a property.
+"tests/**" = ["B011", "B018"]
+# Imports follow `pytest.importorskip("vllm")` so collection skips cleanly.
+"tests/adapters/vllm/test_integration_vllm.py" = ["E402"]
+# Standalone scripts that put a sibling example directory on sys.path before
+# importing from it.
+"examples/**" = ["E402"]
+
+[tool.ruff.format]
+# Defaults: double quotes, spaces, magic trailing comma respected.
+
+# mypy: strict-ish on the pure-Python core (spec, core, router, sinks), looser
+# on the torch/transformers/vLLM-heavy adapters. Strictness is keyed by package
+# pattern, so new modules pick up the right defaults without editing this list.
+# Anything not matched below (adapters, model.py, cli/, ...) gets the baseline.
+[tool.mypy]
+python_version = "3.10"
+files = ["src/undercurrent"]
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+enable_error_code = ["ignore-without-code"]
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = [
+    "undercurrent.spec",
+    "undercurrent.spec.*",
+    "undercurrent.core",
+    "undercurrent.core.*",
+    "undercurrent.router",
+    "undercurrent.router.*",
+    "undercurrent.sinks",
+    "undercurrent.sinks.*",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_any_generics = true
+warn_return_any = true
+no_implicit_reexport = true
+strict_equality = true
+
+# Heavy ML dependencies: untyped or only partially typed, and imported lazily.
+[[tool.mypy.overrides]]
+module = ["torch.*", "transformers.*", "vllm.*", "tokenizers.*", "safetensors.*"]
+ignore_missing_imports = true
+
+# The adapters hook torch, transformers and undocumented vLLM internals;
+# precise typing there isn't possible, so they get the baseline only.
+[[tool.mypy.overrides]]
+module = ["undercurrent.adapters", "undercurrent.adapters.*"]
+check_untyped_defs = true

@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/wrynx/undercurrent/main/schema/probe-spec.schema.json
+version: "1"
+extraction_points:
+  # Sliced range probe: capture the KV cache at layer 20 for generated
+  # tokens 5 through 19 only (a fixed-size window partway through
+  # generation), keeping trajectory state across that window.
+  - name: mid_generation_window
+    layers: 20
+    tensor_type: kv
+    position: "generated[5:20]"
+    probe_type: trajectory_probe
+    probe_kind: trajectory
+    execution_mode: inline

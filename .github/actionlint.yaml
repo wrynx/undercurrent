@@ -1,0 +1,5 @@
+# actionlint config. Custom labels of self-hosted runners used in workflows
+# (gpu.yml runs on [self-hosted, linux, gpu]).
+self-hosted-runner:
+  labels:
+    - gpu

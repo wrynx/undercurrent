@@ -1,0 +1,3 @@
+# Extra requirement for --dataset civil_comments (the built-in toy dataset needs nothing).
+# Undercurrent itself, torch, transformers, numpy and safetensors come with `pip install undercurrent`.
+datasets>=2.14
