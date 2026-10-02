@@ -18,7 +18,7 @@ how a release is cut.
 
 ## [Unreleased]
 
-## [0.1.0] - YYYY-MM-DD
+## [0.1.0] - 2026-10-02
 
 The first public release of **Undercurrent**, Wrynx's activation-probing
 platform for LLM inference. Earlier versions were internal development builds
@@ -31,37 +31,16 @@ container image, and more) is tracked in the
 
 ### Added
 
+- **One installable package.** `pip install undercurrent` installs the
+  `undercurrent` package for Python 3.10+, with the Hugging Face
+  `transformers` backend in the base install. vLLM is never installed by
+  default. Tested on Python 3.10–3.13 with torch 2.1+ and transformers
+  4.40–5.x; see [Compatibility](https://wrynx.github.io/undercurrent/compatibility/).
 - **`ProbedModel`**, the high-level API (`undercurrent.ProbedModel`):
   `ProbedModel.from_pretrained(model, spec=..., probes=...)`, then
   `generate()`, which returns a `GenerationOutput` with the text and each
   extraction point's `ProbeResult`. Backends `"hf"` (default) and `"vllm"`.
   Pass `on_result=callback` for a simple result hook alongside the sink API.
-- **Function probes and a probe registry.** Decorate a plain function
-  `(record) -> float | bool | ProbeSignal | None` with `@probe("name", ...)`
-  for stateless single-shot probes, and register probe classes by name with
-  `@register_probe("name")`. Third-party packages can expose probes through
-  the `undercurrent.probes` entry-point group.
-- **Curated top-level API.** The common names import from `undercurrent`
-  directly; see `docs/api-stability.md` for what is public. `load_spec()`
-  loads a spec from a path, YAML string or dict. The package ships `py.typed`.
-- **Command-line tool** `undercurrent`: `inspect-model` lists a model's
-  hookable layers and supported tensor types, `validate` checks spec files,
-  and `schema` prints the spec JSON Schema (also in
-  `schema/probe-spec.schema.json` and `undercurrent.spec.json_schema()`).
-- **Error hierarchy.** Errors Undercurrent raises on purpose derive from
-  `ProbingError` (and the matching built-in type), with messages that say
-  how to fix the problem.
-- **Sink redaction.** `redact_keys()`, `drop_keys()` and `chain()` control
-  what a sink writes. `WebhookLogSink` redacts prompt text by default.
-- **Router context managers.** `Router` and `router.request(...)` can be used
-  in `with` blocks so requests end and workers shut down cleanly.
-- **Probe-training example** (`examples/train_probe/`) and Colab notebooks
-  (`notebooks/quickstart.ipynb`, `notebooks/train_probe.ipynb`).
-
-- **One installable package.** `pip install undercurrent` installs the
-  `undercurrent` package for Python 3.10+, with the Hugging Face
-  `transformers` backend in the base install. vLLM is never installed by
-  default.
 - **Extraction-point specs** (`undercurrent.spec`). Declare what to capture
   in YAML (`load_yaml_file`, `parse_yaml`, `parse_dict`) or construct
   `ExtractionPoint`s in Python. Specs are validated by pydantic models and
@@ -85,6 +64,11 @@ container image, and more) is tracked in the
   can't share state across requests. Reference probes are in
   `undercurrent.core.examples`: `MLPClassifierProbe` (single-shot) and
   `TrajectoryScoreProbe` (trajectory).
+- **Function probes and a probe registry.** Decorate a plain function
+  `(record) -> float | bool | ProbeSignal | None` with `@probe("name", ...)`
+  for stateless single-shot probes, and register probe classes by name with
+  `@register_probe("name")`. Third-party packages can expose probes through
+  the `undercurrent.probes` entry-point group.
 - **Router** (`undercurrent.router`). Dispatches activation records to
   per-request probe instances. Each extraction point picks an execution mode:
   - `inline`: the probe runs on the generation path and its signal is
@@ -109,6 +93,10 @@ container image, and more) is tracked in the
     exponential backoff, records that exhaust their retries are
     dead-lettered to a file, and the send queue is bounded.
   - A `LogSink` base class for writing your own sink.
+- **Sink redaction.** `redact_keys()`, `drop_keys()` and `chain()` control
+  what a sink writes. `WebhookLogSink` redacts prompt text by default.
+- **Router context managers.** `Router` and `router.request(...)` can be used
+  in `with` blocks so requests end and workers shut down cleanly.
 - **Hugging Face adapter** (`undercurrent.adapters.hf`, in the base install).
   `HFEngineAdapter` captures activations from `transformers` models with
   forward hooks during `generate()`, and aborts generation through a
@@ -132,7 +120,18 @@ container image, and more) is tracked in the
     `allow_unsupported_executor=True`, because cross-rank ordering under
     pipeline parallelism and Ray/distributed executors haven't been
     validated. See the
-    [TP/PP notes](https://github.com/wrynx/undercurrent/blob/main/docs/_legacy/vllm_tp_pp_activation_extraction_notes.md).
+    [tensor and pipeline parallelism notes](https://wrynx.github.io/undercurrent/internals/vllm-parallelism/).
+- **Command-line tool** `undercurrent`: `inspect-model` lists a model's
+  hookable layers and supported tensor types, `validate` checks spec files,
+  and `schema` prints the spec JSON Schema (also in
+  `schema/probe-spec.schema.json` and `undercurrent.spec.json_schema()`).
+- **Curated top-level API.** The common names import from `undercurrent`
+  directly; see [API stability](https://wrynx.github.io/undercurrent/api-stability/)
+  for what is public. `load_spec()`
+  loads a spec from a path, YAML string or dict. The package ships `py.typed`.
+- **Error hierarchy.** Errors Undercurrent raises on purpose derive from
+  `ProbingError` (and the matching built-in type), with messages that say
+  how to fix the problem.
 - **Clear errors for missing backends.** Using an adapter whose backend isn't
   installed raises `MissingDependencyError`, which says how to install it.
 - **Examples** (in the repository, not installed with the package, and covered
@@ -145,6 +144,8 @@ container image, and more) is tracked in the
   - [`examples/openai_server/`](https://github.com/wrynx/undercurrent/tree/main/examples/openai_server):
     a reference OpenAI-compatible wire format for probe verdicts (completion
     bodies and SSE chunks) and a reference HTTP server built on it.
+- **Probe-training example** (`examples/train_probe/`) and Colab notebooks
+  (`notebooks/quickstart.ipynb`, `notebooks/train_probe.ipynb`).
 
 ### Fixed
 
