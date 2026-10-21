@@ -98,7 +98,7 @@ dev = [
     # Hard per-test time limit for `gpu` tests (tests/conftest.py): a stuck vLLM
     # engine dumps every thread's stack and fails instead of hanging the run.
     "pytest-timeout>=2.3",
-    "ruff>=0.16,<0.17",
+    "ruff>=0.16,<0.18",
     "pre-commit>=4",
     # Validates example specs against schema/probe-spec.schema.json in tests.
     "jsonschema>=4.18,<5",
