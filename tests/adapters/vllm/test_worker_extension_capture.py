@@ -194,9 +194,7 @@ def test_activation_buffered_instead_of_routed_when_no_router_bound():
     ACTIVATION POLLING'): when bind_router() was never called -- e.g. the
     RPC handing the worker a live Router reference failed because worker
     and driver are in different OS processes -- _emit() must buffer the
-    ActivationRecord instead of dropping it, and pop_pending_activations()
-    must return it as a plain, msgspec-safe dict (not the ActivationRecord
-    dataclass itself)."""
+    ActivationRecord for pop_pending_activations() instead of dropping it."""
     ext = ProbingWorkerExtension()
     runner = FiringModelRunner(num_layers=1)
     ext.model_runner = runner  # type: ignore[attr-defined]
@@ -210,15 +208,14 @@ def test_activation_buffered_instead_of_routed_when_no_router_bound():
     scheduler_output = types.SimpleNamespace(num_scheduled_tokens={"req-1": 1})
     ext.model_runner.execute_model(scheduler_output)
 
-    pending = ext.pop_pending_activations()
-    assert len(pending) == 1
-    record = pending[0]
-    assert record["request_id"] == "req-1"
-    assert record["extraction_point_name"] == "ep-1"
-    assert record["layer"] == 0
-    assert record["tensor_type"] == "residual_stream"
-    assert record["tensor"] == "row0"
-    assert record["is_generated"] is True
-    assert isinstance(record, dict)
-
-    assert ext.pop_pending_activations() == []  # drained
+    # The wire format (pop_pending_activations' packed batch) needs real torch;
+    # test_worker_extension_bookkeeping.py and activation_batch's tests cover it.
+    # Flush the step's staged captures into the buffer, as pop does first.
+    ext._flush_staged()
+    (record,) = ext._pending_activations
+    assert record.request_id == "req-1"
+    assert record.extraction_point_name == "ep-1"
+    assert record.layer == 0
+    assert record.tensor_type == "residual_stream"
+    assert record.tensor == "row0"
+    assert record.is_generated is True

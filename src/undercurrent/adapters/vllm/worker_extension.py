@@ -124,12 +124,12 @@ the `ActivationRecord` into `self._pending_activations`.
 step (same cadence as `pop_pending_aborts()`, from `adapter.py`'s
 `_drain_pending_activations()`) to retrieve and clear that buffer, so
 `Router.route()` itself runs in the DRIVER process -- where the real
-`Router` lives -- instead of here. It returns plain dicts, not
-`ActivationRecord` instances: vLLM's default (non-pickle) RPC encoder
-natively supports `torch.Tensor` plus str/int/bool/float (see
-`vllm.v1.serial_utils`'s `enc_hook`), but not arbitrary dataclass
-instances, so `adapter.py` reconstructs `ActivationRecord`s from these dicts
-on the receiving end.
+`Router` lives -- instead of here. It returns one packed batch per call
+(`activation_batch.py`): the tensors stacked into float32 `bytes`, the other
+fields as plain lists, which vLLM's default (non-pickle) RPC encoder carries
+natively (it supports neither arbitrary dataclass instances nor tensors nested
+in ad-hoc dicts; see `vllm.v1.serial_utils`). `adapter.py` unpacks the batch
+and reconstructs `ActivationRecord`s on the receiving end.
 
 Net effect versus the in-process fast path: activations (and therefore
 abort decisions) lag by up to one polling interval instead of being
@@ -237,6 +237,7 @@ from ...core import ProbeAction
 from ...errors import ProbingError
 from ...router import Router
 from ...spec import ActivationRecord, ExecutionMode, ExtractionPoint, InterventionMode, TensorType
+from .activation_batch import pack_activation_batch
 from .adapter import VLLMAdapterLimitationError
 from .introspection import check_introspection_compatible, extract_step_batch_metadata
 from .seq_mapper import SeqIdMapper, StepBatchMetadata, TokenRowMapping
@@ -444,7 +445,7 @@ class ProbingWorkerExtension:
         self._pending_aborts.clear()
         return pending
 
-    def pop_pending_activations(self) -> list[dict[str, Any]]:
+    def pop_pending_activations(self) -> dict[str, Any]:
         """Return and clear `ActivationRecord`s buffered by `_emit()`
         because no live `Router` reference ever reached this process --
         see 'CROSS-PROCESS ACTIVATION POLLING' in this module's docstring.
@@ -452,37 +453,19 @@ class ProbingWorkerExtension:
         `_emit()` takes the synchronous fast path in that case and never
         populates this buffer.
 
-        Returns plain dicts, not `ActivationRecord` instances: vLLM's default
-        RPC encoder supports arbitrary str/int/bool/float-keyed structures,
-        but not arbitrary dataclass instances -- `adapter.py` reconstructs
-        `ActivationRecord`s from these dicts on the driver side. `tensor` is
-        sent as a plain nested list (`.tolist()`), not a raw `torch.Tensor`:
-        the encoder's `torch.Tensor` support is a zero-copy, out-of-band
-        buffer reference that only gets reconstructed at message positions
-        its (typed-schema) encoding knows about ahead of time -- a Tensor
-        nested inside our own ad-hoc dict-of-dicts doesn't qualify, and comes
-        back on the driver side as the encoder's raw, un-reconstructed
-        `(dtype, shape, buffer-ref)` triplet instead of a Tensor. A plain
-        list needs no such reconstruction, at the cost of one extra copy
-        (`to_flat_tensor` on the driver side accepts list input already).
-        Polled once per step by `adapter.py`, same cadence as
-        `pop_pending_aborts()`.
+        Returns one packed batch (`activation_batch.pack_activation_batch`):
+        tensors stacked into float32 `bytes` per group, other fields as
+        parallel lists. vLLM's default RPC encoder supports neither our
+        `ActivationRecord` dataclass nor a `torch.Tensor` nested inside an
+        ad-hoc dict (it would arrive as an un-reconstructed `(dtype, shape,
+        buffer-ref)` triplet), but carries `bytes` and plain lists natively.
+        `adapter.py` unpacks the batch back into records. Polled once per
+        step by `adapter.py`, same cadence as `pop_pending_aborts()`.
         """
         self._ensure_state()
         self._flush_staged()
         pending, self._pending_activations = self._pending_activations, []
-        return [
-            {
-                "request_id": r.request_id,
-                "extraction_point_name": r.extraction_point_name,
-                "layer": r.layer,
-                "token_pos": r.token_pos,
-                "tensor_type": r.tensor_type,
-                "tensor": r.tensor.tolist() if hasattr(r.tensor, "tolist") else r.tensor,
-                "is_generated": r.is_generated,
-            }
-            for r in pending
-        ]
+        return pack_activation_batch(pending)
 
     # -----------------------------------------------------------------
     # Hook installation (lazy: first call after the model is loaded)

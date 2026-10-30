@@ -96,6 +96,8 @@ def test_unregister_extraction_clears_pending_abort_for_that_request():
 
 
 def test_pop_pending_activations_drains_and_clears():
+    torch = pytest.importorskip("torch")
+    from undercurrent.adapters.vllm.activation_batch import unpack_activation_batch
     from undercurrent.spec import ActivationRecord
 
     ext = make_extension()
@@ -105,23 +107,21 @@ def test_pop_pending_activations_drains_and_clears():
         layer=0,
         token_pos=0,
         tensor_type="residual_stream",
-        tensor="row0",
+        tensor=torch.tensor([1.0, 2.0]),
         is_generated=True,
     )
     ext._pending_activations.append(record)
-    popped = ext.pop_pending_activations()
-    assert popped == [
-        {
-            "request_id": "req-1",
-            "extraction_point_name": "ep-1",
-            "layer": 0,
-            "token_pos": 0,
-            "tensor_type": "residual_stream",
-            "tensor": "row0",
-            "is_generated": True,
-        }
-    ]
-    assert ext.pop_pending_activations() == []
+    (popped,) = unpack_activation_batch(ext.pop_pending_activations())
+    assert torch.equal(popped.pop("tensor"), torch.tensor([1.0, 2.0]))
+    assert popped == {
+        "request_id": "req-1",
+        "extraction_point_name": "ep-1",
+        "layer": 0,
+        "token_pos": 0,
+        "tensor_type": "residual_stream",
+        "is_generated": True,
+    }
+    assert unpack_activation_batch(ext.pop_pending_activations()) == []
 
 
 def test_register_extraction_accepts_plain_dicts_and_reconstructs_extraction_points():

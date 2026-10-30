@@ -17,6 +17,7 @@ torch = pytest.importorskip("torch")
 
 from tests.adapters.vllm._helpers import FakeModelRunner, make_extraction_point  # noqa: E402
 from undercurrent.adapters.vllm import worker_extension  # noqa: E402
+from undercurrent.adapters.vllm.activation_batch import unpack_activation_batch  # noqa: E402
 from undercurrent.adapters.vllm.worker_extension import ProbingWorkerExtension, _gather_rows_float32  # noqa: E402
 from undercurrent.core import RequestContext  # noqa: E402
 
@@ -151,10 +152,10 @@ def test_polling_path_defers_the_wait_to_pop(events):
     ext.model_runner.execute_model(sched)
     assert "sync" not in events  # no wait inside the step on the polling path
 
-    pending = ext.pop_pending_activations()
+    pending = unpack_activation_batch(ext.pop_pending_activations())
     assert events.count("sync") == 1
     assert [(r["layer"], r["tensor"][0]) for r in pending] == [(0, 0.0), (1, 10.0)]
-    assert ext.pop_pending_activations() == []
+    assert unpack_activation_batch(ext.pop_pending_activations()) == []
 
 
 def test_polling_path_flushes_the_previous_step_at_the_next_step(events):
@@ -166,7 +167,7 @@ def test_polling_path_flushes_the_previous_step_at_the_next_step(events):
     runner.armed = {0: layer_output(1, 5)}
     ext.model_runner.execute_model(sched)
 
-    pending = ext.pop_pending_activations()
+    pending = unpack_activation_batch(ext.pop_pending_activations())
     assert [(r["token_pos"], r["tensor"][0]) for r in pending] == [(2, 0.0), (3, 5.0)]
 
 
@@ -199,5 +200,5 @@ def test_failed_step_discards_its_captures(events):
     with pytest.raises(RuntimeError, match="forward failed"):
         ext.model_runner.execute_model(sched)
 
-    assert ext.pop_pending_activations() == []
+    assert unpack_activation_batch(ext.pop_pending_activations()) == []
     assert "sync" not in events

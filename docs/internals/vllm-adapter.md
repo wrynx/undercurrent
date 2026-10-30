@@ -286,14 +286,21 @@ the `bind_router` call fails. The adapter logs this and falls back to polling:
 
 - `_emit()` buffers each `ActivationRecord` in the worker.
 - After every `RequestOutput`, the adapter calls `pop_pending_activations` over
-  `collective_rpc`. Records travel as plain dicts with the tensor as a nested
-  list, because vLLM's RPC encoder doesn't handle arbitrary dataclasses or
-  tensors nested in ad-hoc structures.
-- `_drain_pending_activations()` rebuilds the `ActivationRecord`s in the driver
-  and routes them **in capture order**, one at a time, through
-  `run_in_executor`. Order matters for trajectory probes, and running routing
-  off the event loop stops a slow probe from stalling every other in-flight
-  request's traffic with the engine.
+  `collective_rpc`. Each worker returns one packed batch
+  (`activation_batch.py`): the tensors stacked into a float32 `bytes` buffer
+  per tensor width, and the other fields as parallel lists. vLLM's RPC encoder
+  carries `bytes` and lists natively, but not arbitrary dataclasses or tensors
+  nested in ad-hoc structures. (Earlier versions sent each tensor as a nested
+  Python list, which cost a few hundred microseconds per record at a
+  3,584-wide hidden size; a batch costs a few microseconds per record.)
+- `_drain_pending_activations()` unpacks the batches, rebuilds the
+  `ActivationRecord`s in the driver and routes them **in capture order**, one
+  at a time, in a single `run_in_executor` call per drain (one thread hand-off
+  per record cost about as much again as the old encoding). Order matters for
+  trajectory probes, and running routing off the event loop stops a slow probe
+  from stalling every other in-flight request's traffic with the engine.
+  Aborts requested by those records are sent to the engine after the batch is
+  routed.
 
 Capture, position matching and row mapping are the same on both paths; only the
 place where `route()` runs differs. On the polling path, activations (and the
