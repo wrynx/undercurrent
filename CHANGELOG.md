@@ -18,6 +18,18 @@ how a release is cut.
 
 ## [Unreleased]
 
+### Fixed
+
+- vLLM adapter: activations could be silently dropped under concurrency on the
+  polling path (engine core in a subprocess, the vLLM 0.28 default). One
+  request's drain of the shared worker buffer could still be routing another
+  request's records when that request received its final output and ended, so
+  those records were discarded as late. A request that finishes in the step that
+  captured its only extraction point (e.g. `prompt[-1]` with one new token) lost
+  its capture entirely; longer generations could lose their last activations.
+  Drains are now serialised, so every record captured up to a request's final
+  step is routed before the request ends.
+
 ## [0.1.0] - 2026-10-02
 
 The first public release of **Undercurrent**, Wrynx's activation-probing
