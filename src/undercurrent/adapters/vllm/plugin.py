@@ -152,3 +152,30 @@ def register() -> None:
         role,
     )
     _apply_env_defaults()
+    _install_graph_capture_patch()
+
+
+def _install_graph_capture_patch() -> None:
+    """Graph-mode residual capture (see graph_capture.py): when
+    `VLLMEngineAdapter.load_model(graph_capture_layers=...)` set
+    `UNDERCURRENT_VLLM_GRAPH_CAPTURE_LAYERS`, patch `GPUModelRunner.load_model`
+    in this process so the model is configured to output those layers'
+    residual stream before vLLM compiles it and captures CUDA graphs.
+
+    Unlike the rest of this module, this does patch vLLM code, not just
+    environment defaults -- but only when the variable is set, which only the
+    adapter does. Patching the class (not an instance) is what lets it take
+    effect before the runner exists. If it fails, the worker extension refuses
+    every graph-mode registration, so capture never silently returns nothing.
+    """
+    from .graph_capture import GRAPH_CAPTURE_ENV, decode_layers, install_runner_patch
+
+    value = os.environ.get(GRAPH_CAPTURE_ENV)
+    if value is None:
+        return
+    try:
+        from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+    except ImportError as exc:  # e.g. a process without the GPU runner; the worker will refuse loudly
+        logger.warning("undercurrent.adapters.vllm: graph-mode capture requested but %s; not patching", exc)
+        return
+    install_runner_patch(GPUModelRunner, decode_layers(value))
