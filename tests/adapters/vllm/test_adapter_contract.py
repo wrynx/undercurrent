@@ -651,3 +651,30 @@ def test_drain_unpacks_worker_batches_dedupes_tp_and_routes_in_one_executor_call
     assert routed == [("req-a", 5, 0.0), ("req-a", 6, 1.0), ("req-b", 4, 2.0)]
     assert len(hops) == 1
     assert aborted == ["req-a"]
+
+
+def test_drained_records_keep_the_workers_capture_timestamp():
+    import asyncio
+
+    torch = pytest.importorskip("torch")
+    from undercurrent.adapters.vllm.activation_batch import pack_activation_batch
+    from undercurrent.core import ProbeAction, ProbeSignal
+    from undercurrent.spec import ActivationRecord
+
+    captured = ActivationRecord("req", "ep", 0, 5, "residual_stream", torch.zeros(2), True, timestamp=1000.25)
+    adapter = VLLMEngineAdapter()
+    adapter._active_requests.add("req")
+
+    async def fake_rpc_async(method, args=()):
+        return pack_activation_batch([captured])
+
+    adapter._rpc_async = fake_rpc_async
+    seen = []
+
+    class FakeRouter:
+        def route(self, record):
+            seen.append(record.timestamp)
+            return ProbeSignal(action=ProbeAction.CONTINUE)
+
+    asyncio.run(adapter._drain_pending_activations(FakeRouter()))
+    assert seen == [1000.25]

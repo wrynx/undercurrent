@@ -229,6 +229,7 @@ vLLM does.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -264,6 +265,7 @@ class _StagedCapture:
     tensor_type: TensorType
     matches: list[tuple[TokenRowMapping, ExtractionPoint]]
     rows: dict[int, Any]  # step row index -> host float32 [hidden] tensor
+    captured_at: float  # time.time() when the hook ran: the records' timestamp
 
 
 @dataclass
@@ -720,7 +722,7 @@ class ProbingWorkerExtension:
             by_row = dict(zip(rows, host.unbind(0)))
         else:
             by_row = {row: _copy_row_to_host(tensor, row) for row in rows}
-        self._staged.append(_StagedCapture(layer_idx, tensor_type, matches, by_row))
+        self._staged.append(_StagedCapture(layer_idx, tensor_type, matches, by_row, time.time()))
 
     def _flush_staged(self) -> None:
         """Wait for staged copies (once), then emit their records in capture order."""
@@ -739,7 +741,7 @@ class ProbingWorkerExtension:
                     # tensor, as with one copy per record, so a probe can't alter another's.
                     row_tensor = row_tensor.clone()
                 emitted.add(mapping.row)
-                self._emit(mapping, ep, capture.layer_idx, capture.tensor_type, row_tensor)
+                self._emit(mapping, ep, capture.layer_idx, capture.tensor_type, row_tensor, capture.captured_at)
 
     def _discard_staged(self) -> None:
         self._staged = []
@@ -752,8 +754,14 @@ class ProbingWorkerExtension:
         layer_idx: int,
         tensor_type: TensorType,
         row_tensor: Any,
+        captured_at: float,
     ) -> None:
-        """Route (in-process) or buffer (polling) one host-side float32 row."""
+        """Route (in-process) or buffer (polling) one host-side float32 row.
+
+        The record's timestamp is the capture time (when the hook ran), not
+        when it is emitted: on the polling path that can be a step or more
+        later, and `ActivationRecord.timestamp` is documented as capture time.
+        """
         record = ActivationRecord(
             request_id=mapping.request_id,
             extraction_point_name=ep.name,
@@ -762,6 +770,7 @@ class ProbingWorkerExtension:
             tensor_type=tensor_type.value if hasattr(tensor_type, "value") else tensor_type,
             tensor=row_tensor,
             is_generated=mapping.is_generated,
+            timestamp=captured_at,
         )
         if self._router is not None:
             # In-process fast path: bind_router() handed us a live Router

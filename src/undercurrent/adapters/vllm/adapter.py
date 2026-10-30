@@ -684,6 +684,8 @@ class VLLMEngineAdapter(EngineAdapter):
                 tensor_type=raw["tensor_type"],
                 tensor=_as_float32_tensor(raw["tensor"]),
                 is_generated=raw["is_generated"],
+                # Capture time in the worker, not now: see ActivationRecord.timestamp.
+                **({"timestamp": raw["timestamp"]} if "timestamp" in raw else {}),
             )
             for raw in pending
         ]

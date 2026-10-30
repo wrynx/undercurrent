@@ -262,3 +262,18 @@ def test_unregistering_the_last_request_turns_its_hooks_off():
     }
     ext.unregister_extraction("req-1")
     assert ext._capture_keys == frozenset()
+
+
+def test_polled_records_carry_capture_time_not_poll_time(events):
+    import time
+
+    eps = {"req-1": [make_extraction_point(name="ep", layer=0)]}
+    ext, runner, sched = setup(num_layers=1, eps_by_request=eps)
+    runner.armed = {0: layer_output(1, 0)}
+    before = time.time()
+    ext.model_runner.execute_model(sched)
+    after = time.time()
+    time.sleep(0.05)  # the driver polls later
+
+    (record,) = unpack_activation_batch(ext.pop_pending_activations())
+    assert before <= record["timestamp"] <= after
