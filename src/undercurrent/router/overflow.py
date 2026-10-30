@@ -25,7 +25,9 @@ class OverflowPolicy(str, Enum):
     DROP_NEWEST = "drop_newest"
     """Drop the incoming activation."""
     BLOCK = "block"
-    """Block ``route()`` until there is room. Applies backpressure to generation."""
+    """Block ``route()`` until there is room. Applies backpressure to whatever calls ``route()``:
+    generation on the HF backend and in-process vLLM; on vLLM's cross-process polling path,
+    only the driver, so results arrive late but the engine isn't slowed."""
 
 
 class _Empty:

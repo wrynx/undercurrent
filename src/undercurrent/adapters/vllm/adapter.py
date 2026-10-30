@@ -628,6 +628,15 @@ class VLLMEngineAdapter(EngineAdapter):
         layer L's activation is always computed before layer L+1's for the
         same token).
 
+        Only the order WITHIN a request matters, so requests are then
+        interleaved round-robin (`_interleave_requests`): every request's
+        first record, then every request's second, and so on. Routing one
+        request's whole backlog before the next's would serialise the async
+        bindings under `OverflowPolicy.BLOCK`: `route()` waits on request A's
+        full queue while every other request's worker sits idle with nothing
+        queued. With a 76 ms probe on 16 concurrent requests that made
+        processing ~13x slower than the probe's own pace.
+
         Drains are serialised (`self._drain_lock`), from the pop through the
         last route. The worker's buffer is shared, so one request's drain
         routinely pops records of OTHER in-flight requests. Without the lock,
@@ -671,9 +680,11 @@ class VLLMEngineAdapter(EngineAdapter):
             pending = [raw for raw in pending if raw["request_id"] in active]
         if not pending:
             return
-        pending = sorted(
-            pending,
-            key=lambda raw: (raw["request_id"], raw["is_generated"], raw["token_pos"], raw["layer"]),
+        pending = _interleave_requests(
+            sorted(
+                pending,
+                key=lambda raw: (raw["request_id"], raw["is_generated"], raw["token_pos"], raw["layer"]),
+            )
         )
         records = [
             ActivationRecord(
@@ -717,6 +728,23 @@ class VLLMEngineAdapter(EngineAdapter):
             if signal is not None and signal.action.value == "abort":
                 to_abort.append(record.request_id)
         return to_abort
+
+
+def _interleave_requests(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Round-robin `records` across requests, keeping each request's order.
+
+    `records` must already be in forward-pass order within each request. The
+    result holds every request's 1st record, then every request's 2nd, and so
+    on; each request's own records stay in their original relative order.
+    """
+    rank: dict[str, int] = {}
+    keyed = []
+    for raw in records:
+        rid = raw["request_id"]
+        keyed.append((rank.get(rid, 0), raw))
+        rank[rid] = rank.get(rid, 0) + 1
+    keyed.sort(key=lambda pair: pair[0])  # stable: equal ranks keep their (request_id) order
+    return [raw for _, raw in keyed]
 
 
 def _as_float32_tensor(value: Any) -> Any:

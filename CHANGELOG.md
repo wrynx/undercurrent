@@ -18,6 +18,17 @@ how a release is cut.
 
 ## [Unreleased]
 
+### Fixed
+
+- vLLM adapter: with `OverflowPolicy.BLOCK` on the cross-process polling path,
+  async probes ran one at a time instead of in parallel. Each drained backlog
+  was routed one request at a time, so `route()` waited on one request's full
+  queue while every other request's worker sat idle. Drained records are now
+  interleaved round-robin across requests, keeping each request's forward-pass
+  order. On an A100 (Qwen2.5-7B, 16 requests, 76 ms probe) the old order made
+  `block` about 13x slower than the probe's own pace. The docs now also say
+  that on this path `block` delays results rather than slowing the engine.
+
 ### Changed
 
 - vLLM adapter: activation capture on CUDA no longer blocks the host once per
