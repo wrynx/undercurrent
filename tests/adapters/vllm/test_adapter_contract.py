@@ -698,9 +698,15 @@ def test_drain_interleaves_requests_and_keeps_each_requests_forward_order():
 
 def test_block_policy_drain_feeds_all_bindings_in_parallel():
     """Under OverflowPolicy.BLOCK, routing request A's whole backlog first would
-    leave every other binding idle while A's full queue drains (one probe at a
-    time). Interleaved, all bindings work concurrently."""
+    leave every other binding idle while A's full queue drains, so at most two
+    probes ever run at once (A's last item and B's first). Interleaved, every
+    request's binding has work at the same time.
+
+    Asserts on how many probes overlap, not on wall time: CI runners are too
+    variable for a timing bound.
+    """
     import asyncio
+    import threading
     import time
 
     from undercurrent.core import Probe, ProbeResult, RequestContext
@@ -708,6 +714,9 @@ def test_block_policy_drain_feeds_all_bindings_in_parallel():
     from undercurrent.spec import ExecutionMode
 
     delay, requests, steps = 0.05, 4, 6
+    lock = threading.Lock()
+    running = [0]
+    peak = [0]
 
     class Slow(Probe):
         probe_kind = "trajectory"
@@ -716,7 +725,12 @@ def test_block_policy_drain_feeds_all_bindings_in_parallel():
             pass
 
         def on_activation(self, record):
+            with lock:
+                running[0] += 1
+                peak[0] = max(peak[0], running[0])
             time.sleep(delay)
+            with lock:
+                running[0] -= 1
 
         def on_end(self, ctx):
             return ProbeResult(ctx.request_id, self.extraction_point_name, verdict=None)
@@ -746,12 +760,9 @@ def test_block_policy_drain_feeds_all_bindings_in_parallel():
         return backlog
 
     adapter._rpc_async = fake_rpc_async
-    start = time.perf_counter()
     asyncio.run(adapter._drain_pending_activations(router))
-    elapsed = time.perf_counter() - start
     for rid in rids:
         router.end_request(rid)
     router.shutdown()
 
-    serial = requests * (steps - 1) * delay  # one binding at a time: ~1.0 s here
-    assert elapsed < 0.6 * serial, f"drain took {elapsed:.2f}s; serialised would be ~{serial:.2f}s"
+    assert peak[0] >= 3, f"at most {peak[0]} probes ran at once; routing is serialising the bindings"
