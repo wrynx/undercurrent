@@ -35,6 +35,11 @@ how a release is cut.
   size, transport fell from about 350 µs to under 15 µs per record. Probes see
   the same records in the same order; aborts are sent after the drain is
   routed.
+- vLLM adapter: forward hooks skip (layer, tensor type) pairs no request
+  captures with one set lookup, and position matching runs once per step
+  instead of once per hooked layer; the captured tensor is only extracted when
+  something matched. Hook-path CPU time per step fell by about a third in a
+  microbenchmark (16 requests x 8 probes, 28 layers).
 ### Fixed
 
 - vLLM adapter: activations could be silently dropped under concurrency on the

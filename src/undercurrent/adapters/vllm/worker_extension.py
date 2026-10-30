@@ -328,6 +328,13 @@ class ProbingWorkerExtension:
         self._introspection_checked = False
         self._current_step_batch: StepBatchMetadata | None = None
         self._current_step_mappings: list[TokenRowMapping] | None = None
+        # This step's matches, keyed by (layer, tensor_type); built once per step by the first
+        # hook that needs it (`_resolve_current_step_matches`).
+        self._current_step_matches: (
+            dict[tuple[int, TensorType], list[tuple[TokenRowMapping, ExtractionPoint]]] | None
+        ) = None
+        # Every (layer, tensor_type) some registered request captures; rebuilt on (un)registration.
+        self._capture_keys: frozenset[tuple[int, TensorType]] = frozenset()
         self._pending_scheduler_output: Any | None = None
         self._handles: list[Any] = []
         self._warned_block_until_signal = False
@@ -396,9 +403,18 @@ class ProbingWorkerExtension:
                     + "."
                 )
         self._requests[request_id] = _WorkerRequestState(extraction_points=tuple(extraction_points))
+        self._refresh_capture_keys()
         self._mapper.register_request(request_id, prompt_len)
         self._ensure_hooks_installed()
         self._warn_if_block_until_signal(extraction_points)
+
+    def _refresh_capture_keys(self) -> None:
+        self._capture_keys = frozenset(
+            (layer, TensorType(ep.tensor_type))
+            for state in self._requests.values()
+            for ep in state.extraction_points
+            for layer in ep.layers
+        )
 
     def _warn_if_block_until_signal(self, extraction_points: list[ExtractionPoint]) -> None:
         """See "INTERVENTION TIMEOUT LIMITATIONS" in this module's
@@ -433,6 +449,7 @@ class ProbingWorkerExtension:
         """Tear down capture state for `request_id`. Idempotent."""
         self._ensure_state()
         self._requests.pop(request_id, None)
+        self._refresh_capture_keys()
         self._mapper.unregister_request(request_id)
         self._pending_aborts.discard(request_id)
 
@@ -580,6 +597,7 @@ class ProbingWorkerExtension:
             self._flush_staged()
             self._current_step_batch = None  # built lazily by the first hook that needs it this step
             self._current_step_mappings = None
+            self._current_step_matches = None
             self._pending_scheduler_output = scheduler_output
             try:
                 result = original_execute_model(scheduler_output, *args, **kwargs)
@@ -589,6 +607,7 @@ class ProbingWorkerExtension:
             finally:
                 self._current_step_batch = None
                 self._current_step_mappings = None
+                self._current_step_matches = None
                 self._pending_scheduler_output = None
             if self._router is not None:
                 # In-process fast path: route this step's captures now, so an
@@ -604,18 +623,14 @@ class ProbingWorkerExtension:
     # -----------------------------------------------------------------
 
     def _make_forward_hook(self, layer_idx: int, tensor_type: TensorType) -> Callable[..., None]:
-        def _hook(module: torch.nn.Module, inputs: Any, output: Any) -> None:
-            if not self._requests:
-                return  # fail open: no registered extraction points at all, nothing to do
-            if not any(
-                layer_idx in ep.layers and ep.tensor_type == tensor_type
-                for state in self._requests.values()
-                for ep in state.extraction_points
-            ):
-                return  # cheap short-circuit before touching the (possibly large) output tensor
+        key = (layer_idx, TensorType(tensor_type))
 
-            mappings = self._resolve_current_step_mappings()
-            if mappings is None:
+        def _hook(module: torch.nn.Module, inputs: Any, output: Any) -> None:
+            if key not in self._capture_keys:
+                return  # nothing registered captures this (layer, tensor_type): one set lookup
+
+            step_matches = self._resolve_current_step_matches()
+            if step_matches is None:
                 logger.warning(
                     "undercurrent.adapters.vllm: forward hook fired for layer=%s tensor_type=%s outside a "
                     "tracked execute_model() call -- skipping capture for this call. This should not "
@@ -624,40 +639,12 @@ class ProbingWorkerExtension:
                     tensor_type,
                 )
                 return
+            matches = step_matches.get(key)
+            if not matches:
+                return  # e.g. a prompt[-1] point during a decode step: don't touch the output tensor
 
             tensor = _extract_captured_tensor(output, tensor_type, layer_idx)
-
-            matches: list[tuple[TokenRowMapping, ExtractionPoint]] = []
-            for mapping in mappings:
-                state = self._requests.get(mapping.request_id)
-                if state is None:
-                    continue
-                for ep in state.extraction_points:
-                    if layer_idx not in ep.layers or ep.tensor_type != tensor_type:
-                        continue
-                    if not ep.matches(
-                        mapping.token_index,
-                        mapping.is_generated,
-                        self._mapper.prompt_len(mapping.request_id),
-                        generated_index=mapping.generated_index,
-                        # num_generated_total is intentionally omitted (None): resolving it would
-                        # require knowing a request's FINAL generated length, which vLLM only
-                        # reveals once a request finishes -- by which point the activation tensors
-                        # for its earlier steps are long gone (they aren't retained past their own
-                        # step; unlike HF's adapter, this one can't buffer a whole request's
-                        # activations to re-check them at the end). Practical effect: a
-                        # NEGATIVE-indexed single-point selector like `generated[-1]` will never
-                        # match under this adapter (see PositionSelector.matches()'s own docstring:
-                        # "the selector will not match until [num_generated_total] is supplied").
-                        # `generated[*]` and `generated[start:]`/`generated[start:stop]` selectors
-                        # are unaffected -- they don't need a final count. Documented limitation,
-                        # not a silent gap: see the vLLM adapter design doc's "Limitations" (docs/_legacy/).
-                        num_generated_total=None,
-                    ):
-                        continue
-                    matches.append((mapping, ep))
-            if matches:
-                self._stage(matches, layer_idx, tensor_type, tensor)
+            self._stage(matches, layer_idx, tensor_type, tensor)
 
         return _hook
 
@@ -671,6 +658,53 @@ class ProbingWorkerExtension:
             self._current_step_batch = extract_step_batch_metadata(self.model_runner, scheduler_output)
         self._current_step_mappings = list(self._mapper.resolve_step(self._current_step_batch))
         return self._current_step_mappings
+
+    def _resolve_current_step_matches(
+        self,
+    ) -> dict[tuple[int, TensorType], list[tuple[TokenRowMapping, ExtractionPoint]]] | None:
+        """This step's matched (row, extraction point) pairs per (layer, tensor_type).
+
+        Position matching doesn't depend on the layer, so it runs once per step
+        (here) rather than once per hook; every hook of the step reads its own
+        key. Within a key, pairs are in row order, then extraction-point order.
+        """
+        if self._current_step_matches is not None:
+            return self._current_step_matches
+        mappings = self._resolve_current_step_mappings()
+        if mappings is None:
+            return None
+        index: dict[tuple[int, TensorType], list[tuple[TokenRowMapping, ExtractionPoint]]] = {}
+        for mapping in mappings:
+            state = self._requests.get(mapping.request_id)
+            if state is None:
+                continue
+            prompt_len = self._mapper.prompt_len(mapping.request_id)
+            for ep in state.extraction_points:
+                if not ep.matches(
+                    mapping.token_index,
+                    mapping.is_generated,
+                    prompt_len,
+                    generated_index=mapping.generated_index,
+                    # num_generated_total is intentionally omitted (None): resolving it would
+                    # require knowing a request's FINAL generated length, which vLLM only
+                    # reveals once a request finishes -- by which point the activation tensors
+                    # for its earlier steps are long gone (they aren't retained past their own
+                    # step; unlike HF's adapter, this one can't buffer a whole request's
+                    # activations to re-check them at the end). Practical effect: a
+                    # NEGATIVE-indexed single-point selector like `generated[-1]` will never
+                    # match under this adapter (see PositionSelector.matches()'s own docstring:
+                    # "the selector will not match until [num_generated_total] is supplied").
+                    # `generated[*]` and `generated[start:]`/`generated[start:stop]` selectors
+                    # are unaffected -- they don't need a final count. Documented limitation,
+                    # not a silent gap: see the vLLM adapter design doc's "Limitations" (docs/_legacy/).
+                    num_generated_total=None,
+                ):
+                    continue
+                tensor_type = TensorType(ep.tensor_type)
+                for layer in dict.fromkeys(ep.layers):
+                    index.setdefault((layer, tensor_type), []).append((mapping, ep))
+        self._current_step_matches = index
+        return index
 
     def _stage(
         self,
