@@ -108,6 +108,9 @@ class VLLMEngineAdapter(EngineAdapter):
         # (e.g. aborted) request and are dropped -- see _drain_pending_activations().
         self._active_requests: set[str] = set()
         self._active_lock = threading.Lock()
+        # Serialises _drain_pending_activations() across the concurrent _agenerate()
+        # coroutines on self._loop -- see that method's docstring.
+        self._drain_lock = asyncio.Lock()
         self._model_name: str | None = None
 
     # -----------------------------------------------------------------
@@ -623,7 +626,23 @@ class VLLMEngineAdapter(EngineAdapter):
         token position; and, within one position, ascending layer, since
         layer L's activation is always computed before layer L+1's for the
         same token).
+
+        Drains are serialised (`self._drain_lock`), from the pop through the
+        last route. The worker's buffer is shared, so one request's drain
+        routinely pops records of OTHER in-flight requests. Without the lock,
+        request B could receive its final output, pop an already-emptied
+        buffer and end while request A's drain was still routing B's records;
+        those would then hit `RouterError` and be dropped as late, silently
+        losing B's last activations (all of them for a request that finishes
+        in the step that captured its only extraction point, e.g. `prompt[-1]`
+        with one new token). With the lock, B's own drain after its final
+        output waits for A's to finish, so every record captured up to that
+        step is routed before B ends.
         """
+        async with self._drain_lock:
+            await self._drain_pending_activations_locked(router)
+
+    async def _drain_pending_activations_locked(self, router: Router) -> None:
         pending = await self._rpc_async("pop_pending_activations")
         pending = self._merge_per_worker_results(
             pending,
