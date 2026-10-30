@@ -18,6 +18,15 @@ how a release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- vLLM adapter: activation capture on CUDA no longer blocks the host once per
+  captured row. Each forward hook gathers its matched rows on the GPU and
+  starts one non-blocking copy into pinned host memory; records are built after
+  one wait per step (at the end of the step in-process, or when the driver
+  polls on the cross-process path). Probes see the same records, in the same
+  order, with inline aborts taking effect at the same step as before. See
+  "Copying captures to the host" in the vLLM adapter internals docs.
 ### Fixed
 
 - vLLM adapter: activations could be silently dropped under concurrency on the
