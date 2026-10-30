@@ -1259,6 +1259,11 @@ def check_vllm_environment() -> None:
             "--backend vllm needs vLLM, which undercurrent never installs by default. Run the harness in your "
             'vLLM environment or image, or `pip install "undercurrent[vllm]"`.'
         )
+    # torch.cuda.is_available() below poisons fork() for CUDA in this process,
+    # but doesn't mark CUDA initialised, so vLLM would still fork its engine
+    # core and that child fails with "Cannot re-initialize CUDA in forked
+    # subprocess". Make vLLM spawn it instead (unless the caller chose).
+    os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
     import torch
 
     if not torch.cuda.is_available():
