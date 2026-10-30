@@ -202,3 +202,63 @@ def test_failed_step_discards_its_captures(events):
 
     assert unpack_activation_batch(ext.pop_pending_activations()) == []
     assert "sync" not in events
+
+
+def test_position_matching_runs_once_per_step_not_once_per_layer(router, events, monkeypatch):
+    from undercurrent.spec import ExtractionPoint
+
+    calls = []
+    original = ExtractionPoint.matches
+
+    def counting(self, *args, **kwargs):
+        calls.append(self.name)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(ExtractionPoint, "matches", counting)
+    eps = {
+        "req-a": [make_extraction_point(name="a", layer=[0, 1], probe_type="recording")],
+        "req-b": [make_extraction_point(name="b", layer=[0, 1], probe_type="recording")],
+    }
+    ext, runner, sched = setup(router, eps_by_request=eps)
+    runner.armed = {0: layer_output(2, 0), 1: layer_output(2, 10)}
+
+    ext.model_runner.execute_model(sched)
+
+    assert sorted(calls) == ["a", "b"]  # one check per (row, point) per step, shared by both layers
+    assert [(r.layer, r.tensor[0].item()) for r in router.get_probe("req-a", "a").received] == [(0, 0.0), (1, 10.0)]
+    assert [(r.layer, r.tensor[0].item()) for r in router.get_probe("req-b", "b").received] == [(0, 1.0), (1, 11.0)]
+    router.end_request("req-a")
+    router.end_request("req-b")
+
+
+def test_no_tensor_extraction_on_a_step_where_nothing_matches(events, monkeypatch):
+    extracted = []
+    original = worker_extension._extract_captured_tensor
+
+    def counting(output, tensor_type, layer_idx):
+        extracted.append(layer_idx)
+        return original(output, tensor_type, layer_idx)
+
+    monkeypatch.setattr(worker_extension, "_extract_captured_tensor", counting)
+    # prompt[-1] only matches during prefill; row 0 here is a decode token (2 computed, prompt_len 2).
+    eps = {"req-1": [make_extraction_point(name="ep", layer=0, position="prompt[-1]", probe_type="recording")]}
+    ext, runner, sched = setup(num_layers=1, eps_by_request=eps)
+    runner.armed = {0: layer_output(1, 0)}
+
+    ext.model_runner.execute_model(sched)
+
+    assert extracted == []
+    assert events == []
+    assert unpack_activation_batch(ext.pop_pending_activations()) == []
+
+
+def test_unregistering_the_last_request_turns_its_hooks_off():
+    ext = ProbingWorkerExtension()
+    ext.model_runner = StepRunner(num_layers=2)  # type: ignore[attr-defined]
+    ext.register_extraction("req-1", [make_extraction_point(name="ep", layer=[0, 1])], prompt_len=2)
+    assert ext._capture_keys == {
+        (0, worker_extension.TensorType.RESIDUAL_STREAM),
+        (1, worker_extension.TensorType.RESIDUAL_STREAM),
+    }
+    ext.unregister_extraction("req-1")
+    assert ext._capture_keys == frozenset()
