@@ -538,3 +538,55 @@ def test_drain_pending_activations_still_raises_router_errors_for_live_requests(
 
     with pytest.raises(RouterError):
         asyncio.run(adapter._drain_pending_activations(FakeRouter()))
+
+
+def test_drain_waits_for_concurrent_drain_routing_this_requests_records():
+    """Request A's drain pops request B's record; B's own drain (after its final
+    output) must not return before that record is routed, or B ends first and
+    the record is dropped as late."""
+    import asyncio
+    import time
+
+    from undercurrent.core import ProbeAction, ProbeSignal
+
+    adapter = VLLMEngineAdapter()
+    adapter._active_requests.update({"req-a", "req-b"})
+    buffer = [
+        [
+            {
+                "request_id": "req-b",
+                "extraction_point_name": "ep-1",
+                "layer": 0,
+                "token_pos": 3,
+                "tensor_type": "residual_stream",
+                "tensor": [1.0, 2.0],
+                "is_generated": False,
+            }
+        ]
+    ]
+
+    async def fake_rpc_async(method, args=()):
+        assert method == "pop_pending_activations"
+        popped = list(buffer)
+        buffer.clear()
+        return popped or [[]]
+
+    adapter._rpc_async = fake_rpc_async
+    routed = []
+
+    class SlowRouter:
+        def route(self, record):
+            time.sleep(0.2)  # a probe doing real work, on the executor thread
+            routed.append(record.request_id)
+            return ProbeSignal(action=ProbeAction.CONTINUE)
+
+    async def scenario():
+        router = SlowRouter()
+        drain_a = asyncio.create_task(adapter._drain_pending_activations(router))
+        await asyncio.sleep(0.05)  # A has popped B's record and is routing it
+        await adapter._drain_pending_activations(router)  # B's drain after its final output
+        b_saw = list(routed)  # what was routed when B would end the request
+        await drain_a
+        return b_saw
+
+    assert asyncio.run(scenario()) == ["req-b"]
