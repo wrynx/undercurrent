@@ -228,6 +228,30 @@ wants that (layer, tensor type), so unused hooks cost little.
 Which tensor each hook sees under tensor and pipeline parallelism is covered in
 [Tensor & pipeline parallelism](vllm-parallelism.md).
 
+### Copying captures to the host
+
+Probes run on the host, so every captured row is copied from the GPU. A forward
+hook runs while the GPU is still working through earlier kernels, and a
+blocking copy inside the hook makes the host wait for the GPU. While the host
+waits, it can't queue the next layers' kernels, so the GPU then idles while the
+host catches up. Doing that once per matched row (as before) cost one stall per
+(row, layer) per step.
+
+For CUDA tensors, each hook instead gathers all of its matched rows on the GPU
+and starts one non-blocking copy into pinned host memory, recording a CUDA
+event after it. The records are built after one wait on the latest event, once
+per step:
+
+- in-process (`bind_router()` succeeded): at the end of the `execute_model`
+  call, before the driver polls for aborts, so inline aborts take effect at the
+  same step as before;
+- cross-process polling: when the driver calls `pop_pending_activations()`, or
+  at the start of the next step, whichever comes first. The copies have
+  finished by then, so the wait costs nothing.
+
+Records still arrive in capture order (hook order, then row order). On CPU each
+row is copied synchronously, since there's no device to overlap with.
+
 ### Engine settings the adapter forces
 
 `load_model()` sets two environment variables before it builds the engine. Each

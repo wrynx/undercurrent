@@ -80,8 +80,9 @@ forward pass.
     an ordinary Python method call handing this extension a direct
     reference to the live `Router` object (no serialization involved,
     despite going through `collective_rpc` for uniformity with the other
-    RPC methods) -- so `route()` can be called straight from inside the
-    forward hook. `adapter.py`'s `load_model()` checks the resolved
+    RPC methods) -- so `route()` can be called directly on the engine
+    thread, at the end of the step that captured the activation (see
+    "CAPTURE COST" below). `adapter.py`'s `load_model()` checks the resolved
     executor class and raises `VLLMAdapterLimitationError` for anything
     else UNLESS the caller passes `allow_unsupported_executor=True`, so
     this limitation fails loudly rather than silently dropping
@@ -142,8 +143,9 @@ only where `route()` executes changes.
 =====================================================================
  INTERVENTION TIMEOUT LIMITATIONS (block_until_signal + continuous batching)
 =====================================================================
-`_emit()` below calls `self._router.route(record)` synchronously, from
-inside the forward hook, when running the in-process fast path (see
+`_emit()` below calls `self._router.route(record)` synchronously, on the
+engine thread at the end of the capturing step's `execute_model` call
+(`_flush_staged()`), when running the in-process fast path (see
 "PROCESS TOPOLOGY" / "CROSS-PROCESS ACTIVATION POLLING" above -- under the
 polling fallback, `route()` instead runs in the driver process, from
 `adapter.py`'s `_drain_pending_activations()`). For an extraction point
@@ -191,6 +193,34 @@ themselves, never the Router's resolved per-binding policy) -- that case
 is documented here and in the adapter's own docstring, not warned about at
 runtime.
 
+=====================================================================
+ CAPTURE COST: ONE DEVICE->HOST COPY PER HOOK, ONE WAIT PER STEP
+=====================================================================
+A forward hook runs on the host while the GPU is still executing earlier
+kernels. A blocking device->host copy inside the hook stalls the host until
+the GPU catches up, so the host can no longer queue the next layers' kernels
+ahead of the GPU, and the GPU idles while the host does the rest of the
+step's Python. Copying each matched row separately (as earlier versions did)
+paid that stall once per (row, layer): at batch 32 with 8 probed layers that
+is 256 stalls per decode step.
+
+For CUDA tensors, a hook therefore gathers all of its matched rows with one
+on-device gather and starts one non-blocking copy into pinned host memory
+(`_stage_rows_cuda`), recording a CUDA event after it. The records are built
+and handed on (`_flush_staged`) only after waiting on the latest event, once
+per step:
+
+  - in-process fast path (`self._router` bound): at the end of the
+    `execute_model` call, so inline decisions are made before the driver
+    polls `pop_pending_aborts()` for this step, exactly as before;
+  - cross-process polling: lazily, when the driver calls
+    `pop_pending_activations()` (or at the start of the next step), by which
+    point the copies have long finished, so the wait costs nothing.
+
+Records are emitted in capture order (hook firing order, then row order), as
+before. CPU tensors (CPU-only runs, unit tests) keep the simple synchronous
+per-row copy: there is no device to overlap with.
+
 Internal and experimental: this reads undocumented vLLM internals and is
 not part of the public API (see docs/api-stability.md); it changes whenever
 vLLM does.
@@ -223,6 +253,16 @@ _UNSUPPORTED_TENSOR_TYPES = (TensorType.KV,)
 class WorkerExtractionError(ProbingError):
     """Raised for invalid worker-side extraction registration (e.g. an
     unsupported tensor_type like `kv`, or a duplicate/unknown request_id)."""
+
+
+@dataclass
+class _StagedCapture:
+    """One hook's matched rows, copied (or being copied) to the host and not yet emitted."""
+
+    layer_idx: int
+    tensor_type: TensorType
+    matches: list[tuple[TokenRowMapping, ExtractionPoint]]
+    rows: dict[int, Any]  # step row index -> host float32 [hidden] tensor
 
 
 @dataclass
@@ -278,6 +318,10 @@ class ProbingWorkerExtension:
         self._router: Router | None = None
         self._pending_aborts: set[str] = set()
         self._pending_activations: list[ActivationRecord] = []
+        # Hook captures whose device->host copies may still be in flight; see
+        # "CAPTURE COST" in the module docstring.
+        self._staged: list[_StagedCapture] = []
+        self._staged_event: Any | None = None
         self._hooks_installed = False
         self._execute_model_wrapped = False
         self._introspection_checked = False
@@ -425,6 +469,7 @@ class ProbingWorkerExtension:
         `pop_pending_aborts()`.
         """
         self._ensure_state()
+        self._flush_staged()
         pending, self._pending_activations = self._pending_activations, []
         return [
             {
@@ -548,15 +593,25 @@ class ProbingWorkerExtension:
             if not self._introspection_checked:
                 check_introspection_compatible(model_runner, scheduler_output)
                 self._introspection_checked = True
+            # Polling path: the previous step's captures, if the driver hasn't popped them yet.
+            self._flush_staged()
             self._current_step_batch = None  # built lazily by the first hook that needs it this step
             self._current_step_mappings = None
             self._pending_scheduler_output = scheduler_output
             try:
-                return original_execute_model(scheduler_output, *args, **kwargs)
+                result = original_execute_model(scheduler_output, *args, **kwargs)
+            except BaseException:
+                self._discard_staged()  # a failed step's partial captures, possibly mid-copy
+                raise
             finally:
                 self._current_step_batch = None
                 self._current_step_mappings = None
                 self._pending_scheduler_output = None
+            if self._router is not None:
+                # In-process fast path: route this step's captures now, so an
+                # inline abort is pending before the driver polls for it.
+                self._flush_staged()
+            return result
 
         model_runner.execute_model = _wrapped_execute_model
         self._execute_model_wrapped = True
@@ -589,6 +644,7 @@ class ProbingWorkerExtension:
 
             tensor = _extract_captured_tensor(output, tensor_type, layer_idx)
 
+            matches: list[tuple[TokenRowMapping, ExtractionPoint]] = []
             for mapping in mappings:
                 state = self._requests.get(mapping.request_id)
                 if state is None:
@@ -616,7 +672,9 @@ class ProbingWorkerExtension:
                         num_generated_total=None,
                     ):
                         continue
-                    self._emit(mapping, ep, layer_idx, tensor_type, tensor)
+                    matches.append((mapping, ep))
+            if matches:
+                self._stage(matches, layer_idx, tensor_type, tensor)
 
         return _hook
 
@@ -631,28 +689,54 @@ class ProbingWorkerExtension:
         self._current_step_mappings = list(self._mapper.resolve_step(self._current_step_batch))
         return self._current_step_mappings
 
+    def _stage(
+        self,
+        matches: list[tuple[TokenRowMapping, ExtractionPoint]],
+        layer_idx: int,
+        tensor_type: TensorType,
+        tensor: torch.Tensor,
+    ) -> None:
+        """Start copying this hook's matched rows to the host; `_flush_staged` emits them."""
+        rows = list(dict.fromkeys(mapping.row for mapping, _ in matches))
+        if getattr(tensor, "is_cuda", False):
+            host, self._staged_event = _stage_rows_cuda(tensor, rows)
+            by_row = dict(zip(rows, host.unbind(0)))
+        else:
+            by_row = {row: _copy_row_to_host(tensor, row) for row in rows}
+        self._staged.append(_StagedCapture(layer_idx, tensor_type, matches, by_row))
+
+    def _flush_staged(self) -> None:
+        """Wait for staged copies (once), then emit their records in capture order."""
+        if not self._staged:
+            return
+        staged, self._staged = self._staged, []
+        event, self._staged_event = self._staged_event, None
+        if event is not None:
+            event.synchronize()  # the latest copy; the stream ran the earlier ones before it
+        for capture in staged:
+            emitted: set[int] = set()
+            for mapping, ep in capture.matches:
+                row_tensor = capture.rows[mapping.row]
+                if mapping.row in emitted:
+                    # Two extraction points on the same row: each record gets its own
+                    # tensor, as with one copy per record, so a probe can't alter another's.
+                    row_tensor = row_tensor.clone()
+                emitted.add(mapping.row)
+                self._emit(mapping, ep, capture.layer_idx, capture.tensor_type, row_tensor)
+
+    def _discard_staged(self) -> None:
+        self._staged = []
+        self._staged_event = None
+
     def _emit(
         self,
         mapping: TokenRowMapping,
         ep: ExtractionPoint,
         layer_idx: int,
         tensor_type: TensorType,
-        tensor: torch.Tensor,
+        row_tensor: Any,
     ) -> None:
-        import torch  # local import: only reached when a hook actually fires, i.e. torch is already loaded
-
-        # float32, not the model's native bfloat16/float16: vLLM's RPC encoder
-        # serializes tensors via numpy, which has no native bfloat16 support --
-        # a bfloat16 tensor crossing collective_rpc (the cross-process
-        # activation-polling fallback below) comes back as the encoder's raw
-        # (dtype, shape, bytes) fallback tuple instead of a torch.Tensor, which
-        # `to_flat_tensor` then fails to convert. The in-process fast path
-        # (self._router is not None) never crosses that boundary, so it would
-        # tolerate any dtype -- casting here keeps both paths identical.
-        # copy=True: when the tensor is already float32 on CPU, `.to()` would
-        # return a view, and fused-residual models' in-place add in the next
-        # layer would then overwrite the captured values.
-        row_tensor = tensor[mapping.row].detach().to("cpu", dtype=torch.float32, copy=True)
+        """Route (in-process) or buffer (polling) one host-side float32 row."""
         record = ActivationRecord(
             request_id=mapping.request_id,
             extraction_point_name=ep.name,
@@ -664,8 +748,8 @@ class ProbingWorkerExtension:
         )
         if self._router is not None:
             # In-process fast path: bind_router() handed us a live Router
-            # reference -- route synchronously, exactly as this adapter has
-            # always done, so an inline abort decision is available immediately.
+            # reference -- route synchronously, at the end of the capturing
+            # step, so an inline abort is pending before the driver polls for it.
             signal = self._router.route(record)
             if signal is not None and signal.action == ProbeAction.ABORT and ep.execution_mode == ExecutionMode.INLINE:
                 self._pending_aborts.add(mapping.request_id)
@@ -676,6 +760,62 @@ class ProbingWorkerExtension:
         # adapter.py polls pop_pending_activations() every step and routes
         # these itself, in the driver process where the real Router lives.
         self._pending_activations.append(record)
+
+
+def _copy_row_to_host(tensor: torch.Tensor, row: int) -> torch.Tensor:
+    """One row as a host float32 tensor that owns its memory (CPU tensors).
+
+    float32, not the model's native bfloat16/float16: vLLM's RPC encoder
+    serializes tensors via numpy, which has no native bfloat16 support -- a
+    bfloat16 tensor crossing collective_rpc (the cross-process polling
+    fallback) comes back as the encoder's raw (dtype, shape, bytes) fallback
+    tuple instead of a torch.Tensor. Casting here keeps both paths identical.
+    copy=True: when the tensor is already float32 on CPU, `.to()` would return
+    a view, and fused-residual models' in-place add in the next layer would
+    then overwrite the captured values.
+    """
+    import torch  # local import: only reached when a hook actually fires, i.e. torch is already loaded
+
+    return tensor[row].detach().to("cpu", dtype=torch.float32, copy=True)
+
+
+def _gather_rows_float32(tensor: torch.Tensor, rows: list[int]) -> torch.Tensor:
+    """`tensor[rows]` as a new float32 `[len(rows), hidden]` tensor on `tensor`'s device.
+
+    A contiguous run of rows (the common decode case: every request in the
+    batch probed) is sliced, which needs no index tensor; anything else uses
+    an index built in pinned memory and copied without blocking, so neither
+    form waits for the device. The result never aliases `tensor`, which a
+    fused-residual model's next layer updates in place.
+    """
+    import torch
+
+    src = tensor.detach()
+    first = rows[0]
+    if rows == list(range(first, first + len(rows))):
+        picked = src[first : first + len(rows)]
+    else:
+        index = torch.tensor(rows, dtype=torch.long)
+        if src.is_cuda:
+            index = index.pin_memory().to(src.device, non_blocking=True)
+        picked = src.index_select(0, index)
+    return picked.to(dtype=torch.float32, copy=True)
+
+
+def _stage_rows_cuda(tensor: torch.Tensor, rows: list[int]) -> tuple[torch.Tensor, Any]:
+    """Start one non-blocking copy of `tensor[rows]` into pinned host memory.
+
+    Returns the host tensor (valid once the event has completed) and a CUDA
+    event recorded after the copy on the current stream.
+    """
+    import torch
+
+    gathered = _gather_rows_float32(tensor, rows)
+    host = torch.empty(gathered.shape, dtype=torch.float32, pin_memory=True)
+    host.copy_(gathered, non_blocking=True)
+    event = torch.cuda.Event()
+    event.record()
+    return host, event
 
 
 def _extract_captured_tensor(output: Any, tensor_type: TensorType, layer_idx: int) -> torch.Tensor:
