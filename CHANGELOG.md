@@ -26,6 +26,26 @@ how a release is cut.
   measurement) saw the time of routing, not of capture, and couldn't tell how
   stale an activation was. The worker now stamps each capture when its hook
   runs and the packed batch carries it to the driver.
+- vLLM adapter: with `OverflowPolicy.BLOCK` on the cross-process polling path,
+  async probes ran one at a time instead of in parallel. Each drained backlog
+  was routed one request at a time, so `route()` waited on one request's full
+  queue while every other request's worker sat idle. Drained records are now
+  interleaved round-robin across requests, keeping each request's forward-pass
+  order. On an A100 (Qwen2.5-7B, 16 requests, 76 ms probe) the old order made
+  `block` about 13x slower than the probe's own pace. The docs now also say
+  that on this path `block` delays results rather than slowing the engine.
+
+### Added
+
+- vLLM adapter (experimental): graph-mode `residual_stream` capture.
+  `load_model(graph_capture_layers=[...])` (also accepted by
+  `ProbedModel(..., backend="vllm")`) captures the residual stream at the given
+  decoder layers without `enforce_eager=True`, so the engine keeps CUDA graphs
+  and `torch.compile`. It reuses vLLM's EAGLE-3 auxiliary hidden-state outputs,
+  enabled by the `vllm.general_plugins` entry point before compilation. Other
+  tensor types, other layers, models without that interface, and speculative
+  decoding that uses aux outputs are rejected with an error. The benchmark
+  harness gains `--graph-capture`.
 
 ### Changed
 

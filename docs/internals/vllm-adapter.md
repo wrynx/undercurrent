@@ -228,6 +228,40 @@ wants that (layer, tensor type), so unused hooks cost little.
 Which tensor each hook sees under tensor and pipeline parallelism is covered in
 [Tensor & pipeline parallelism](vllm-parallelism.md).
 
+### Graph-mode residual capture (experimental)
+
+Forward hooks are Python, and neither CUDA-graph replay nor vLLM's
+`torch.compile`d forward runs them, so hook-based capture needs
+`enforce_eager=True`. That is expensive: on an A100, eager decoding of
+Qwen2.5-7B at batch 16 runs at about half the CUDA-graph throughput, and
+Qwen2.5-0.5B at about an eighth, before any probe runs.
+
+For `residual_stream`, `load_model(graph_capture_layers=[...])` avoids eager
+mode. It reuses the auxiliary hidden-state outputs vLLM already has for EAGLE-3
+speculative decoding: models implementing that interface (Llama and Qwen2 among
+them) output `hidden_states + residual` after the chosen decoder layers, inside
+the compiled and captured graph. Aux index `k + 1` is decoder layer `k`'s
+output, the same tensor hook mode captures at layer `k`.
+
+- The adapter sets `UNDERCURRENT_VLLM_GRAPH_CAPTURE_LAYERS` for the engine
+  process and disables vLLM's compile cache (its key doesn't cover the extra
+  outputs).
+- In the engine process, the `vllm.general_plugins` entry point patches
+  `GPUModelRunner.load_model`: after loading and before compilation, it calls
+  `set_aux_hidden_state_layers` and sets `use_aux_hidden_state_outputs`, as
+  vLLM does for EAGLE-3, and wraps `_model_forward` to hand the aux outputs to
+  the worker extension after each forward pass.
+- The worker extension installs no forward hooks. It stages each probed
+  layer's matched rows from the aux outputs with the same batched,
+  non-blocking copy as hook mode (see below), before the next replay overwrites
+  them.
+
+Limits, each enforced with an error rather than silently capturing nothing:
+`residual_stream` only, at the layers given at load time; the model must
+implement vLLM's EAGLE-3 aux-output interface; speculative decoding that uses
+aux outputs itself can't be combined with it. `graph_capture_layers=[]` runs a
+graph-mode engine with nothing captured (the benchmark's `probed-0`).
+
 ### Copying captures to the host
 
 Probes run on the host, so every captured row is copied from the GPU. A forward
@@ -415,7 +449,7 @@ These all fail loudly unless the table says otherwise.
 | More than one worker (tensor or pipeline parallelism, Ray) isn't validated. | `load_model()` raises `VLLMAdapterLimitationError`. | `allow_unsupported_executor=True`. Results from all workers are merged and deduplicated, but this is unvalidated. | [Tensor & pipeline parallelism](vllm-parallelism.md) |
 | `residual_stream` needs to recognise the decoder layer's output: a single tensor, `(hidden_states, None)`, or a fused-residual `(hidden_states, residual)` pair of matching shape and dtype (captured as their sum). | Any other output (for example HunYuan's 3-tuple) raises `VLLMAdapterLimitationError` when a `residual_stream` extraction point fires on it. GPU verification of the fused-residual sum against the HF backend is pending `scripts/gpu_check.sh`. | Use `attn_out`, `mlp_out` or `final_norm`, or the HF backend, on such models. | [Compatibility](../compatibility.md#fixed-in-010-residual_stream-on-fused-residual-vllm-layers) |
 | `attn_out` is only hooked when the layer has a `self_attn` submodule. vLLM's GPT-2 implementation names it `attn`. | **Silent.** `attn_out` extraction points never fire on GPT-2-style models. | Use `residual_stream` or `mlp_out` on those models. | Future work |
-| Only tested with `enforce_eager=True`. The adapter doesn't set it. | With CUDA graphs, replayed steps run recorded GPU kernels without executing Python, so forward hooks can't fire during them. | Pass `enforce_eager=True` to `load_model()`, as the tests and examples do. | Future work |
+| Hook-based capture needs `enforce_eager=True`. The adapter doesn't set it. | With CUDA graphs, replayed steps run recorded GPU kernels without executing Python, so forward hooks can't fire during them. | Pass `enforce_eager=True` to `load_model()`, as the tests and examples do; or, for `residual_stream` only, use `graph_capture_layers=[...]` (experimental, see [Graph-mode residual capture](#graph-mode-residual-capture-experimental)). | Other tensor types: future work |
 | `tensor: kv` is rejected. The KV cache lives in paged blocks addressed through a slot mapping, not in a per-step tensor with one row per token. | `register_extraction` raises `WorkerExtractionError`. | Use `residual_stream`, `attn_out`, `mlp_out` or `final_norm`. | Future work |
 | Negative-indexed single-point selectors (`generated[-1]`) never match. Resolving them needs the request's final length, which vLLM only knows once the request finishes, and by then the step's activations are gone. | **Silent.** No records for those extraction points. | `generated[*]` and slices (`generated[5:]`, `generated[2:8]`) work. Keep the last record from a trajectory probe yourself. | Future work |
 | `block_until_signal` stalls every request in the batch, not only the triggering one. | Higher latency for co-batched requests, up to `timeout_ms` per blocked step. | Use `mode: reject` or `execution_mode: async` under concurrency. | By design (see [above](#block_until_signal-and-continuous-batching)) |

@@ -229,8 +229,9 @@ vLLM does.
 from __future__ import annotations
 
 import logging
+import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -240,6 +241,7 @@ from ...router import Router
 from ...spec import ActivationRecord, ExecutionMode, ExtractionPoint, InterventionMode, TensorType
 from .activation_batch import pack_activation_batch
 from .adapter import VLLMAdapterLimitationError
+from .graph_capture import AUX_CALLBACK_ATTR, GRAPH_CAPTURE_ENV, LAYERS_ATTR, unsupported_extraction_points
 from .introspection import check_introspection_compatible, extract_step_batch_metadata
 from .seq_mapper import SeqIdMapper, StepBatchMetadata, TokenRowMapping
 from .version_check import check_vllm_version
@@ -404,6 +406,17 @@ class ProbingWorkerExtension:
                     + ", ".join(t.value for t in TensorType if t not in _UNSUPPORTED_TENSOR_TYPES)
                     + "."
                 )
+        graph_layers = self._graph_capture_layers()
+        if graph_layers is not None:
+            problems = unsupported_extraction_points(extraction_points, graph_layers)
+            if problems:
+                raise WorkerExtractionError(
+                    f"register_extraction(): request {request_id!r} can't be captured in graph mode: "
+                    + "; ".join(problems)
+                    + ". Graph mode captures residual_stream at the layers given to "
+                    "load_model(graph_capture_layers=...); load with enforce_eager=True and without "
+                    "graph_capture_layers for other tensor types or layers."
+                )
         self._requests[request_id] = _WorkerRequestState(extraction_points=tuple(extraction_points))
         self._refresh_capture_keys()
         self._mapper.register_request(request_id, prompt_len)
@@ -490,8 +503,34 @@ class ProbingWorkerExtension:
     # Hook installation (lazy: first call after the model is loaded)
     # -----------------------------------------------------------------
 
+    def _graph_capture_layers(self) -> Sequence[int] | None:
+        """The configured graph-capture layers, or None in hook (eager) mode.
+
+        Graph mode is requested through the environment (see graph_capture.py)
+        and configured on the runner by the plugin's `load_model` patch; if the
+        patch didn't run, refuse rather than capture nothing.
+        """
+        if GRAPH_CAPTURE_ENV not in os.environ:
+            return None
+        layers = getattr(self.model_runner, LAYERS_ATTR, None)
+        if layers is None:
+            raise WorkerExtractionError(
+                f"{GRAPH_CAPTURE_ENV} is set but the model runner wasn't configured for graph-mode capture: "
+                "the undercurrent vllm.general_plugins entry point didn't patch GPUModelRunner.load_model in "
+                "this process. Check that undercurrent is installed in the engine's environment."
+            )
+        return tuple(layers)
+
     def _ensure_hooks_installed(self) -> None:
         if self._hooks_installed:
+            return
+        if self._graph_capture_layers() is not None:
+            # Graph mode: CUDA-graph replay and the compiled forward never run Python hooks.
+            # The runner hands us its aux hidden-state outputs after each forward instead.
+            setattr(self.model_runner, AUX_CALLBACK_ATTR, self._on_aux_hidden_states)
+            self._install_execute_model_wrapper()
+            self._hooks_installed = True
+            logger.info("undercurrent.adapters.vllm: graph-mode capture; no forward hooks installed")
             return
         decoder_layers = self._find_decoder_layers()
         for layer_idx, layer_module in decoder_layers.items():
@@ -707,6 +746,26 @@ class ProbingWorkerExtension:
                     index.setdefault((layer, tensor_type), []).append((mapping, ep))
         self._current_step_matches = index
         return index
+
+    def _on_aux_hidden_states(self, aux_hidden_states: Sequence[torch.Tensor]) -> None:
+        """Graph mode: stage this step's matched rows from the model's aux outputs.
+
+        `aux_hidden_states[i]` is the residual stream after decoder layer
+        `layers[i]` (the configured layers, ascending), `[padded_tokens, hidden]`.
+        Rows beyond the scheduled tokens are CUDA-graph padding and never match.
+        These tensors are graph outputs that the next replay overwrites, so they
+        are gathered now, before this call returns.
+        """
+        if not self._capture_keys:
+            return
+        step_matches = self._resolve_current_step_matches()
+        if step_matches is None:
+            return
+        layers = getattr(self.model_runner, LAYERS_ATTR, ())
+        for layer, tensor in zip(layers, aux_hidden_states):
+            matches = step_matches.get((layer, TensorType.RESIDUAL_STREAM))
+            if matches:
+                self._stage(matches, layer, TensorType.RESIDUAL_STREAM, tensor)
 
     def _stage(
         self,
