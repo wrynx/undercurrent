@@ -134,6 +134,7 @@ or surprising runs too: the page must show what was measured. Don't commit
 | `--dtype {auto,float32,float16,bfloat16}` | `auto` | Model dtype (hf: `from_pretrained`; vllm: engine `dtype`) |
 | `--vllm-arg KEY=VALUE` | none | vllm only, repeatable: engine arg passed to both the baseline `vllm.LLM` and the probed engine. VALUE is parsed as JSON when it can be |
 | `--isolate {auto,process,none}` | `auto` | Run each scenario in its own subprocess (auto: yes for vllm, no for hf) |
+| `--graph-capture` | off | vllm only: run probed scenarios in graph mode (CUDA graphs, no `enforce_eager`), capturing `residual_stream` at the scenario's layers via `load_model(graph_capture_layers=...)`. Passing `--vllm-arg enforce_eager=true` still applies to `baseline`, so run the graph baseline separately |
 
 ## Scenarios
 
@@ -268,7 +269,7 @@ One JSON object.
 | `run_id` | string | The run directory's name |
 | `created_utc` | string | ISO 8601 UTC start time |
 | `cli_argv` | list of strings | The exact command-line arguments (after `run.py`) |
-| `args` | object | Every resolved option (after `--dry-run` and backend defaults), keyed by argparse destination: `backend`, `model`, `num_prompts`, `batch_size`, `max_new_tokens`, `input_len`, `scenarios`, `warmup`, `repeats`, `out`, `dry_run`, `seed`, `probe_delay_ms`, `slow_queue_depth`, `flat_tolerance_pct`, `worker_pool_size`, `device`, `dtype`, `vllm_engine_kwargs`, `isolate` |
+| `args` | object | Every resolved option (after `--dry-run` and backend defaults), keyed by argparse destination: `backend`, `model`, `num_prompts`, `batch_size`, `max_new_tokens`, `input_len`, `scenarios`, `warmup`, `repeats`, `out`, `dry_run`, `seed`, `probe_delay_ms`, `slow_queue_depth`, `flat_tolerance_pct`, `worker_pool_size`, `device`, `dtype`, `vllm_engine_kwargs`, `isolate`, `graph_capture` |
 | `scenarios` | list of strings | Expanded scenario names, in run order |
 | `dry_run` | bool | Whether `--dry-run` was given |
 | `device` | string or null | hf: the torch device; vllm: null |

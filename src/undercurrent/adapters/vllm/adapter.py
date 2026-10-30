@@ -53,6 +53,7 @@ from ...spec import ActivationRecord, ExtractionPoint
 from .._optional import COMPATIBILITY_DOC, require_torch, require_vllm
 from ..base import EngineAdapter
 from .activation_batch import unpack_activation_batches
+from .graph_capture import GRAPH_CAPTURE_ENV, decode_layers, encode_layers, unsupported_extraction_points
 from .version_check import check_vllm_version
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,7 @@ class VLLMEngineAdapter(EngineAdapter):
         # coroutines on self._loop -- see that method's docstring.
         self._drain_lock = asyncio.Lock()
         self._model_name: str | None = None
+        self._graph_capture_layers: tuple[int, ...] | None = None
 
     # -----------------------------------------------------------------
     # EngineAdapter contract
@@ -125,6 +127,7 @@ class VLLMEngineAdapter(EngineAdapter):
 
         allow_unsupported_executor = kwargs.pop("allow_unsupported_executor", False)
         allow_v2_model_runner = kwargs.pop("allow_v2_model_runner", False)
+        self._configure_graph_capture(kwargs.pop("graph_capture_layers", None))
         if not allow_v2_model_runner:
             # introspection.py (this adapter's row -> (request_id, token_pos) translation)
             # was written against vLLM's V1 GPUModelRunner's `input_batch` shape and doesn't
@@ -184,7 +187,34 @@ class VLLMEngineAdapter(EngineAdapter):
             self.shutdown()
             raise
 
+    def _configure_graph_capture(self, layers: Any) -> None:
+        """Opt into graph-mode residual capture (see graph_capture.py).
+
+        `layers` (decoder-layer indices) are the only layers whose
+        `residual_stream` can be probed with this engine; no other tensor type
+        can be. The engine process inherits the environment variable set here,
+        and vLLM's compile cache is disabled because its key doesn't cover the
+        extra outputs (a cached graph without them would be reused silently).
+        """
+        if layers is None:
+            os.environ.pop(GRAPH_CAPTURE_ENV, None)  # don't inherit a previous engine's setting
+            self._graph_capture_layers = None
+            return
+        self._graph_capture_layers = decode_layers(encode_layers(layers))
+        os.environ[GRAPH_CAPTURE_ENV] = encode_layers(self._graph_capture_layers)
+        if self._graph_capture_layers:
+            os.environ["VLLM_DISABLE_COMPILE_CACHE"] = "1"
+
     def register_extraction(self, request_id: str, extraction_points: list[ExtractionPoint]) -> None:
+        if self._graph_capture_layers is not None:
+            problems = unsupported_extraction_points(extraction_points, self._graph_capture_layers)
+            if problems:
+                raise VLLMAdapterLimitationError(
+                    f"register_extraction({request_id!r}): not capturable in graph mode: "
+                    + "; ".join(problems)
+                    + ". Graph mode captures residual_stream at load_model(graph_capture_layers=...) only; "
+                    "load with enforce_eager=True and without graph_capture_layers for anything else."
+                )
         if request_id in self._pending_extraction_points:
             raise VLLMAdapterLimitationError(
                 f"register_extraction(): request_id {request_id!r} is already pending registration "
