@@ -138,7 +138,7 @@ Each async extraction point of each request gets its own **binding**:
 | --- | --- | --- |
 | `drop_oldest` (default) | Evict the oldest waiting activation, accept the new one | Generation never waits; the probe loses older activations |
 | `drop_newest` | Discard the incoming activation | Generation never waits; the probe loses the latest activations |
-| `block` | `route()` waits until there is room | Nothing is dropped; generation slows down to the probe's pace |
+| `block` | `route()` waits until there is room | Nothing is dropped; generation slows down to the probe's pace (on vLLM's default cross-process path, results arrive late instead; see [Async execution](../production/async-execution.md)) |
 
 Every drop is counted in the router's [metrics](../production/metrics.md), so
 you can see when a probe falls behind.

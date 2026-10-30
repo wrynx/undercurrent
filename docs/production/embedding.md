@@ -341,7 +341,7 @@ don't set one. When a queue is full, the router-wide
 | --- | --- | --- |
 | `OverflowPolicy.DROP_OLDEST` (default) | Unaffected | The oldest queued activations; the probe sees the most recent ones |
 | `OverflowPolicy.DROP_NEWEST` | Unaffected | The incoming activations; the probe sees the earliest ones |
-| `OverflowPolicy.BLOCK` | `route()` waits for space, so generation slows to the probe's pace (on vLLM, the whole batch does) | Nothing |
+| `OverflowPolicy.BLOCK` | `route()` waits for space, so generation slows to the probe's pace (on vLLM in-process, the whole batch does; on vLLM's cross-process path the engine isn't slowed and results arrive late instead) | Nothing |
 
 Use a drop policy for live serving and watch the drop count; use `BLOCK` for
 offline evaluation where every activation must be processed. A bigger queue

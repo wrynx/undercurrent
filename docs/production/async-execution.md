@@ -67,7 +67,7 @@ When `route()` finds a binding's queue full, the overflow policy decides:
 | --- | --- | --- | --- |
 | `drop_oldest` (default) | Evict the oldest queued activation, accept the new one | Older activations; the probe sees the most recent window | Nothing on the generation path |
 | `drop_newest` | Reject the incoming activation; the queue is unchanged | Newer activations; the probe sees the earliest ones | Nothing on the generation path |
-| `block` | `route()` waits until the worker frees a slot | Nothing is dropped | Generation slows to the probe's speed |
+| `block` | `route()` waits until the worker frees a slot | Nothing is dropped | Generation slows to the probe's speed (HF, and vLLM in-process); on vLLM's cross-process path, time to results instead |
 
 How to choose:
 
@@ -79,10 +79,24 @@ How to choose:
 - **`block`** suits offline evaluation and data collection, where every
   activation must be processed and throughput matters less than completeness.
   Avoid it in latency-sensitive serving: a slow probe becomes slow generation.
-  On vLLM, the blocked `route()` call runs on the shared engine thread, so it
-  stalls every request in the batch, not just this one. And if the binding is
-  waiting for a pool thread (see above), `block` can stall generation until
-  another request ends.
+  On vLLM, what waits depends on where `route()` runs:
+  - **In-process** (the router reached the worker): the blocked `route()` call
+    runs on the shared engine thread, so it stalls every request in the batch,
+    not just this one.
+  - **Cross-process polling** (the default with vLLM 0.28, whose engine core
+    runs in its own process): `route()` runs in the driver, after the engine
+    has already produced the tokens. The engine is **not** slowed; it keeps
+    generating while the driver falls behind, captured activations accumulate
+    in the engine process until the driver catches up, and each `generate()`
+    call returns only once all of its activations have been processed. So
+    `block` there means "lossless, results delayed", not backpressure. The
+    adapter routes each drained backlog round-robin across requests, so all
+    bindings work in parallel and the delay is about the probe's own pace;
+    measured on an A100 with Qwen2.5-7B, 16 requests and a 76 ms probe, routing
+    one request's backlog at a time had made it about 13x slower than that.
+
+  And if the binding is waiting for a pool thread (see above), `block` can
+  stall until another request ends.
 
 The policy is set router-wide:
 

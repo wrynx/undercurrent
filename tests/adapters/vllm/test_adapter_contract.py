@@ -648,6 +648,121 @@ def test_drain_unpacks_worker_batches_dedupes_tp_and_routes_in_one_executor_call
 
     hops = asyncio.run(drain())
 
-    assert routed == [("req-a", 5, 0.0), ("req-a", 6, 1.0), ("req-b", 4, 2.0)]
+    # Forward order within each request, round-robin across requests.
+    assert routed == [("req-a", 5, 0.0), ("req-b", 4, 2.0), ("req-a", 6, 1.0)]
     assert len(hops) == 1
     assert aborted == ["req-a"]
+
+
+def test_drain_interleaves_requests_and_keeps_each_requests_forward_order():
+    import asyncio
+
+    from undercurrent.core import ProbeAction, ProbeSignal
+
+    def raw(request_id, token_pos, layer=0):
+        return {
+            "request_id": request_id,
+            "extraction_point_name": "ep",
+            "layer": layer,
+            "token_pos": token_pos,
+            "tensor_type": "residual_stream",
+            "tensor": [0.0],
+            "is_generated": True,
+        }
+
+    # A backlog several steps deep, as when the engine runs ahead of the driver.
+    backlog = [raw("b", 7), raw("a", 3, layer=1), raw("c", 9), raw("a", 2), raw("b", 6), raw("a", 3), raw("a", 2, 1)]
+    adapter = VLLMEngineAdapter()
+    adapter._active_requests.update({"a", "b", "c"})
+
+    async def fake_rpc_async(method, args=()):
+        return backlog
+
+    adapter._rpc_async = fake_rpc_async
+    routed = []
+
+    class FakeRouter:
+        def route(self, record):
+            routed.append((record.request_id, record.token_pos, record.layer))
+            return ProbeSignal(action=ProbeAction.CONTINUE)
+
+    asyncio.run(adapter._drain_pending_activations(FakeRouter()))
+
+    assert routed == [
+        ("a", 2, 0), ("b", 6, 0), ("c", 9, 0),  # every request's first record
+        ("a", 2, 1), ("b", 7, 0),               # then every request's second
+        ("a", 3, 0),
+        ("a", 3, 1),
+    ]  # fmt: skip
+
+
+def test_block_policy_drain_feeds_all_bindings_in_parallel():
+    """Under OverflowPolicy.BLOCK, routing request A's whole backlog first would
+    leave every other binding idle while A's full queue drains, so at most two
+    probes ever run at once (A's last item and B's first). Interleaved, every
+    request's binding has work at the same time.
+
+    Asserts on how many probes overlap, not on wall time: CI runners are too
+    variable for a timing bound.
+    """
+    import asyncio
+    import threading
+    import time
+
+    from undercurrent.core import Probe, ProbeResult, RequestContext
+    from undercurrent.router import OverflowPolicy, Router
+    from undercurrent.spec import ExecutionMode
+
+    delay, requests, steps = 0.05, 4, 6
+    lock = threading.Lock()
+    running = [0]
+    peak = [0]
+
+    class Slow(Probe):
+        probe_kind = "trajectory"
+
+        def on_start(self, ctx):
+            pass
+
+        def on_activation(self, record):
+            with lock:
+                running[0] += 1
+                peak[0] = max(peak[0], running[0])
+            time.sleep(delay)
+            with lock:
+                running[0] -= 1
+
+        def on_end(self, ctx):
+            return ProbeResult(ctx.request_id, self.extraction_point_name, verdict=None)
+
+    router = Router({"recording": Slow}, default_overflow_policy=OverflowPolicy.BLOCK, worker_pool_size=requests)
+    ep = make_extraction_point(name="ep", layer=0, execution_mode=ExecutionMode.ASYNC, queue_depth=1)
+    rids = [f"r{i}" for i in range(requests)]
+    for rid in rids:
+        router.register_request(rid, [ep], RequestContext(rid, {}, None))
+    backlog = [
+        {
+            "request_id": rid,
+            "extraction_point_name": "ep",
+            "layer": 0,
+            "token_pos": step,
+            "tensor_type": "residual_stream",
+            "tensor": [0.0],
+            "is_generated": True,
+        }
+        for rid in rids
+        for step in range(steps)
+    ]
+    adapter = VLLMEngineAdapter()
+    adapter._active_requests.update(rids)
+
+    async def fake_rpc_async(method, args=()):
+        return backlog
+
+    adapter._rpc_async = fake_rpc_async
+    asyncio.run(adapter._drain_pending_activations(router))
+    for rid in rids:
+        router.end_request(rid)
+    router.shutdown()
+
+    assert peak[0] >= 3, f"at most {peak[0]} probes ran at once; routing is serialising the bindings"
