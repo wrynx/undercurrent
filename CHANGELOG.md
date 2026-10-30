@@ -27,6 +27,14 @@ how a release is cut.
   polls on the cross-process path). Probes see the same records, in the same
   order, with inline aborts taking effect at the same step as before. See
   "Copying captures to the host" in the vLLM adapter internals docs.
+- vLLM adapter: on the cross-process polling path (vLLM 0.28's default), the
+  worker sends each poll's activations as one packed batch (float32 `bytes`
+  plus per-field lists) instead of one dict per record with the tensor as a
+  nested Python list, and the driver routes each drain in one executor call
+  instead of one per record. In a CPU microbenchmark at a 3,584-wide hidden
+  size, transport fell from about 350 µs to under 15 µs per record. Probes see
+  the same records in the same order; aborts are sent after the drain is
+  routed.
 ### Fixed
 
 - vLLM adapter: activations could be silently dropped under concurrency on the

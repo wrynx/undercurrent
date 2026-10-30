@@ -590,3 +590,64 @@ def test_drain_waits_for_concurrent_drain_routing_this_requests_records():
         return b_saw
 
     assert asyncio.run(scenario()) == ["req-b"]
+
+
+def test_drain_unpacks_worker_batches_dedupes_tp_and_routes_in_one_executor_call():
+    """The worker sends packed batches (activation_batch.py); the driver
+    unpacks them, collapses TP-replicated events, routes in forward-pass
+    order with a single executor hop, and aborts each request once."""
+    import asyncio
+
+    torch = pytest.importorskip("torch")
+    from undercurrent.adapters.vllm.activation_batch import pack_activation_batch
+    from undercurrent.core import ProbeAction, ProbeSignal
+    from undercurrent.spec import ActivationRecord
+
+    def rec(request_id, token_pos, value):
+        return ActivationRecord(
+            request_id=request_id,
+            extraction_point_name="ep-1",
+            layer=0,
+            token_pos=token_pos,
+            tensor_type="residual_stream",
+            tensor=torch.full((3,), value),
+            is_generated=True,
+        )
+
+    worker_batch = pack_activation_batch([rec("req-b", 4, 2.0), rec("req-a", 6, 1.0), rec("req-a", 5, 0.0)])
+    adapter = VLLMEngineAdapter()
+    adapter._active_requests.update({"req-a", "req-b"})
+
+    async def fake_rpc_async(method, args=()):
+        assert method == "pop_pending_activations"
+        return [worker_batch, worker_batch]  # two TP ranks report the same events
+
+    adapter._rpc_async = fake_rpc_async
+    routed = []
+
+    class FakeRouter:
+        def route(self, record):
+            routed.append((record.request_id, record.token_pos, record.tensor[0].item()))
+            return ProbeSignal(action=ProbeAction.ABORT if record.request_id == "req-a" else ProbeAction.CONTINUE)
+
+    aborted = []
+    adapter._engine = types.SimpleNamespace(abort=lambda rid: aborted.append(rid))
+
+    async def drain():
+        loop = asyncio.get_running_loop()
+        hops = []
+        original = loop.run_in_executor
+
+        def counting(executor, fn, *args):
+            hops.append(fn)
+            return original(executor, fn, *args)
+
+        loop.run_in_executor = counting
+        await adapter._drain_pending_activations(FakeRouter())
+        return hops
+
+    hops = asyncio.run(drain())
+
+    assert routed == [("req-a", 5, 0.0), ("req-a", 6, 1.0), ("req-b", 4, 2.0)]
+    assert len(hops) == 1
+    assert aborted == ["req-a"]

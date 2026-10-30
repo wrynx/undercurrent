@@ -52,6 +52,7 @@ from ...router import Router, RouterError
 from ...spec import ActivationRecord, ExtractionPoint
 from .._optional import COMPATIBILITY_DOC, require_torch, require_vllm
 from ..base import EngineAdapter
+from .activation_batch import unpack_activation_batches
 from .version_check import check_vllm_version
 
 logger = logging.getLogger(__name__)
@@ -645,7 +646,7 @@ class VLLMEngineAdapter(EngineAdapter):
     async def _drain_pending_activations_locked(self, router: Router) -> None:
         pending = await self._rpc_async("pop_pending_activations")
         pending = self._merge_per_worker_results(
-            pending,
+            unpack_activation_batches(pending),
             # Identity of a capture event, deliberately excluding the tensor
             # itself: TP replicates the SAME event (same request/extraction
             # point/layer/token) across every rank with an identical tensor
@@ -674,9 +675,8 @@ class VLLMEngineAdapter(EngineAdapter):
             pending,
             key=lambda raw: (raw["request_id"], raw["is_generated"], raw["token_pos"], raw["layer"]),
         )
-        loop = asyncio.get_running_loop()
-        for raw in pending:
-            record = ActivationRecord(
+        records = [
+            ActivationRecord(
                 request_id=raw["request_id"],
                 extraction_point_name=raw["extraction_point_name"],
                 layer=raw["layer"],
@@ -685,8 +685,29 @@ class VLLMEngineAdapter(EngineAdapter):
                 tensor=_as_float32_tensor(raw["tensor"]),
                 is_generated=raw["is_generated"],
             )
+            for raw in pending
+        ]
+        # One executor hop for the whole drain, not one per record: the
+        # hand-off to a thread and back costs far more than routing a record
+        # to a cheap probe. Records are still routed one at a time, in order.
+        to_abort = await asyncio.get_running_loop().run_in_executor(None, self._route_drained, router, records)
+        abort_fn = getattr(self._engine, "abort", None)
+        for rid in dict.fromkeys(to_abort):
+            if abort_fn is None:
+                logger.warning(
+                    "undercurrent.adapters.vllm: engine has no abort() method; cannot honor abort for %r", rid
+                )
+                continue
+            result = abort_fn(rid)
+            if asyncio.iscoroutine(result):
+                await result
+
+    def _route_drained(self, router: Router, records: list[ActivationRecord]) -> list[str]:
+        """Route drained records in order (on an executor thread); return the request ids to abort."""
+        to_abort = []
+        for record in records:
             try:
-                signal = await loop.run_in_executor(None, router.route, record)
+                signal = router.route(record)
             except RouterError:
                 with self._active_lock:
                     still_active = record.request_id in self._active_requests
@@ -694,23 +715,15 @@ class VLLMEngineAdapter(EngineAdapter):
                     raise
                 continue  # the request ended while we were draining: a late arrival
             if signal is not None and signal.action.value == "abort":
-                abort_fn = getattr(self._engine, "abort", None)
-                if abort_fn is None:
-                    logger.warning(
-                        "undercurrent.adapters.vllm: engine has no abort() method; cannot honor abort for %r",
-                        record.request_id,
-                    )
-                    continue
-                result = abort_fn(record.request_id)
-                if asyncio.iscoroutine(result):
-                    await result
+                to_abort.append(record.request_id)
+        return to_abort
 
 
 def _as_float32_tensor(value: Any) -> Any:
     """A record tensor as a CPU float32 `torch.Tensor`.
 
-    Records that cross the RPC boundary from the worker process arrive as plain
-    nested lists (see worker_extension.py's `pop_pending_activations`). Probes
+    Records unpacked from a worker's activation batch are already tensors (see
+    `activation_batch.py`); a plain nested list is converted. Probes
     get the same type on every path -- in-process vLLM and the HF backend hand
     them a `torch.Tensor` -- so rebuild one here.
     """
