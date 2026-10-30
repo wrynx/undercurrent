@@ -28,6 +28,17 @@ how a release is cut.
   order. On an A100 (Qwen2.5-7B, 16 requests, 76 ms probe) the old order made
   `block` about 13x slower than the probe's own pace. The docs now also say
   that on this path `block` delays results rather than slowing the engine.
+### Added
+
+- vLLM adapter (experimental): graph-mode `residual_stream` capture.
+  `load_model(graph_capture_layers=[...])` (also accepted by
+  `ProbedModel(..., backend="vllm")`) captures the residual stream at the given
+  decoder layers without `enforce_eager=True`, so the engine keeps CUDA graphs
+  and `torch.compile`. It reuses vLLM's EAGLE-3 auxiliary hidden-state outputs,
+  enabled by the `vllm.general_plugins` entry point before compilation. Other
+  tensor types, other layers, models without that interface, and speculative
+  decoding that uses aux outputs are rejected with an error. The benchmark
+  harness gains `--graph-capture`.
 
 ### Changed
 

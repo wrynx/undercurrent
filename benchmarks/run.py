@@ -670,15 +670,22 @@ class VLLMRunner:
 
         from undercurrent.model import ProbedModel
 
+        spec = build_spec(scenario, self.num_layers)
+        engine_kwargs = dict(self.engine_kwargs)
+        if self.args.graph_capture:
+            # Graph mode: the probed engine runs with CUDA graphs and captures residual_stream
+            # through the model's aux outputs at exactly the layers this scenario probes.
+            engine_kwargs.pop("enforce_eager", None)
+            engine_kwargs["graph_capture_layers"] = sorted({p["layers"] for p in spec["extraction_points"]})
         pm = ProbedModel(
             self.args.model,
             backend="vllm",
-            spec=build_spec(scenario, self.num_layers),
+            spec=spec,
             probes=probes,
             router_kwargs=router_kwargs,
             metrics_sink=sink,
             max_concurrency=self.args.batch_size,
-            **self.engine_kwargs,
+            **engine_kwargs,
         )
 
         class Probed(Session):
@@ -1195,6 +1202,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="run each scenario in its own subprocess (auto: yes for vllm, no for hf)",
     )
+    p.add_argument(
+        "--graph-capture",
+        action="store_true",
+        help="vllm only: run probed scenarios in graph mode (CUDA graphs + torch.compile, no enforce_eager), "
+        "capturing residual_stream via load_model(graph_capture_layers=...); the baseline is unaffected",
+    )
     p.add_argument("--worker-output", help=argparse.SUPPRESS)
     return p
 
@@ -1226,6 +1239,8 @@ def resolve_args(args: argparse.Namespace) -> argparse.Namespace:
             )
         if args.vllm_engine_kwargs:
             raise HarnessError("--vllm-arg only applies to --backend vllm")
+        if args.graph_capture:
+            raise HarnessError("--graph-capture only applies to --backend vllm")
         if args.device is None:
             import torch
 
@@ -1308,6 +1323,8 @@ def _child_argv(args: argparse.Namespace, scenario: Scenario, output: str) -> li
         argv += ["--device", args.device]
     if args.worker_pool_size is not None:
         argv += ["--worker-pool-size", str(args.worker_pool_size)]
+    if args.graph_capture:
+        argv.append("--graph-capture")
     for key, value in args.vllm_engine_kwargs.items():
         argv += ["--vllm-arg", f"{key}={json.dumps(value)}"]
     return argv
