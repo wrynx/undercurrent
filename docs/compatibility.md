@@ -53,7 +53,7 @@ pip install -e ".[dev]"     # from a checkout, into your vLLM environment
 scripts/gpu_check.sh
 ```
 
-## Known issues (v0.1)
+## Known issues (v0.2)
 
 These affect the vLLM adapter only. The Hugging Face backend is not affected.
 
@@ -112,6 +112,16 @@ into [Tested combinations](#tested-combinations). For 0.1.0 that's an NVIDIA
 L4 with vLLM 0.28.0. Other GPUs, larger models and multi-GPU topologies
 haven't been run, and the vLLM adapter is still experimental. You can run the
 check on your own GPU machine too (see above).
+
+### Graph-mode `residual_stream` capture is experimental
+
+New in 0.2.0, `load_model(graph_capture_layers=[...])` captures
+`residual_stream` without `enforce_eager=True` by reusing vLLM's EAGLE-3
+auxiliary hidden-state outputs. It's limited to `residual_stream` at the layers
+given at load time, on models that implement that interface, and it patches
+more vLLM internals than hook mode does. Every other configuration still needs
+`enforce_eager=True`. See
+[Keep CUDA graphs](guides/vllm-deployment.md#keep-cuda-graphs-graph-mode-residual-capture-experimental).
 
 ### vLLM 0.29 and 0.30 aren't supported yet
 

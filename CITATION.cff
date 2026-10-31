@@ -33,6 +33,5 @@ keywords:
   - guardrails
   - mechanistic-interpretability
   - llm-inference
-version: "0.1.0"
-# PLACEHOLDER: replace with the actual v0.1.0 release date (YYYY-MM-DD) when tagging.
-date-released: "2026-10-02"
+version: "0.2.0"
+date-released: "2026-10-31"
