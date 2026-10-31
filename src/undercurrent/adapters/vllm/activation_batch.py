@@ -5,8 +5,9 @@ ACTIVATION POLLING"), `pop_pending_activations()` returns one batch per call
 instead of one dict per record. Records whose tensors have the same number of
 elements share a group: their tensors are stacked into one float32 buffer and
 sent as `bytes`, with the other fields as parallel lists. Everything in a batch
-is a str, int, bool, list or bytes, which vLLM's msgpack RPC encoder carries
-natively.
+is a str, int, float, bool, list or bytes, which vLLM's msgpack RPC encoder
+carries natively. `timestamp` is the capture time in the worker, so a probe can
+tell how old an activation is when it arrives.
 
 Earlier versions sent each tensor as a nested Python list (`.tolist()`), which
 built and serialised one Python float per element: about half a millisecond
@@ -27,7 +28,7 @@ from typing import Any
 
 BATCH_MARKER = "undercurrent_activation_batch"
 _FORMAT_VERSION = 1
-_FIELDS = ("request_id", "extraction_point_name", "layer", "token_pos", "tensor_type", "is_generated")
+_FIELDS = ("request_id", "extraction_point_name", "layer", "token_pos", "tensor_type", "is_generated", "timestamp")
 
 
 def pack_activation_batch(records: list[Any]) -> dict[str, Any]:

@@ -62,6 +62,12 @@ unchanged.
 
 ### Fixed
 
+- vLLM adapter: `ActivationRecord.timestamp` is now the capture time, as
+  documented, on every path. On the cross-process polling path the record was
+  rebuilt in the driver with a fresh timestamp, so a probe (or a latency
+  measurement) saw the time of routing, not of capture, and couldn't tell how
+  stale an activation was. The worker now stamps each capture when its hook
+  runs and the packed batch carries it to the driver.
 - vLLM adapter: with `OverflowPolicy.BLOCK` on the cross-process polling path,
   async probes ran one at a time instead of in parallel. Each drained backlog
   was routed one request at a time, so `route()` waited on one request's full
