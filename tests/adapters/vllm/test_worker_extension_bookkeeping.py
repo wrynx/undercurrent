@@ -109,6 +109,7 @@ def test_pop_pending_activations_drains_and_clears():
         tensor_type="residual_stream",
         tensor=torch.tensor([1.0, 2.0]),
         is_generated=True,
+        timestamp=1234.5,
     )
     ext._pending_activations.append(record)
     (popped,) = unpack_activation_batch(ext.pop_pending_activations())
@@ -120,6 +121,7 @@ def test_pop_pending_activations_drains_and_clears():
         "token_pos": 0,
         "tensor_type": "residual_stream",
         "is_generated": True,
+        "timestamp": 1234.5,
     }
     assert unpack_activation_batch(ext.pop_pending_activations()) == []
 
