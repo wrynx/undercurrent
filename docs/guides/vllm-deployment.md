@@ -15,13 +15,14 @@ server and want to drive the engine adapter and `Router` yourself, read
     GPU, use the default Hugging Face backend from the
     [Quickstart](../getting-started/quickstart.md).
 
-!!! warning "Known issues (v0.1)"
-    The vLLM adapter hasn't been verified on a GPU yet. Fixed in 0.1.0: on
-    Llama-family models (and other fused-residual architectures),
-    `residual_stream` is captured as `hidden_states + residual`, the same
-    residual stream as the HF backend; earlier builds captured the layer's
-    MLP output. GPU verification of the fix is pending. See
-    [Known issues](../compatibility.md#known-issues-v01) for details.
+!!! warning "Known issues (v0.2)"
+    The vLLM adapter is experimental. Its GPU tests are run by hand before
+    each release (there's no GPU CI yet), and only vLLM 0.28 is supported.
+    Fixed in 0.1.0 and GPU-verified: on Llama-family models (and other
+    fused-residual architectures), `residual_stream` is captured as
+    `hidden_states + residual`, the same residual stream as the HF backend;
+    earlier builds captured the layer's MLP output. See
+    [Known issues](../compatibility.md#known-issues-v02) for details.
 
 ## Install into your vLLM environment
 
@@ -260,7 +261,7 @@ Everything below `ProbedModel` stays reachable:
 
 ## Serving over HTTP
 
-Undercurrent v0.1 doesn't include an HTTP server. A supported, OpenAI-compatible
+Undercurrent v0.2 doesn't include an HTTP server. A supported, OpenAI-compatible
 `serve` command is [on the roadmap](https://github.com/wrynx/undercurrent/blob/main/ROADMAP.md).
 Until then, put `VLLMEngineAdapter` (or `ProbedModel`) behind the web server
 you already run.
@@ -378,6 +379,9 @@ flagged stream (`choices[0].finish_reason == "content_flagged"`, empty
   per-topology support status.
 - **Use `enforce_eager=True`.** With CUDA graphs, replayed steps don't run
   Python, so the forward hooks can't fire. The adapter doesn't set it for you.
+  Eager mode is expensive (on an A100, Qwen2.5-7B at batch 16 decodes at
+  about half its CUDA-graph throughput). If you only need `residual_stream`,
+  see [Keep CUDA graphs: graph-mode residual capture](#keep-cuda-graphs-graph-mode-residual-capture-experimental).
 - **`block_until_signal` stalls the whole batch.** Under continuous batching,
   a blocking inline probe holds the scheduler step that every co-batched
   request shares, for up to `timeout_ms`. The adapter logs a one-time warning
@@ -394,6 +398,43 @@ flagged stream (`choices[0].finish_reason == "content_flagged"`, empty
 - **`vllm serve`.** Undercurrent registers a `vllm.general_plugins` entry
   point, but a bare `vllm serve` process doesn't drive probing. See
   [Running under `vllm serve`](../internals/vllm-adapter.md#running-under-vllm-serve).
+
+### Keep CUDA graphs: graph-mode residual capture (experimental)
+
+*New in 0.2.0.* If every extraction point is a `residual_stream`, you can
+leave `enforce_eager` off and keep vLLM's CUDA graphs and `torch.compile`.
+Pass the decoder layers to capture as `graph_capture_layers`:
+
+```py
+with ProbedModel.from_pretrained(
+    "Qwen/Qwen2.5-0.5B-Instruct",
+    backend="vllm",
+    spec=SPEC,                     # residual_stream at layer 6 only
+    probes={"norm_gate": norm_gate},
+    graph_capture_layers=[6],      # instead of enforce_eager=True
+) as model:
+    outputs = model.generate(prompts, max_new_tokens=32)
+```
+
+`VLLMEngineAdapter.load_model(..., graph_capture_layers=[...])` works the same
+way. Instead of forward hooks, the adapter reads the auxiliary hidden-state
+outputs vLLM already computes inside the graph for EAGLE-3 speculative
+decoding. Probes see the same `residual_stream` tensor as in hook mode.
+
+Limits, each enforced with an error rather than a silent miss:
+
+- `residual_stream` only, and only at the layers given at load time. An
+  extraction point with another tensor type or layer is rejected when it's
+  registered.
+- The model must implement vLLM's EAGLE-3 aux-output interface (Llama and
+  Qwen2, among others; GPT-2 doesn't).
+- It can't be combined with speculative decoding that uses aux outputs
+  itself.
+- vLLM's compile cache is disabled for the engine, so start-up recompiles.
+
+Benchmark it on your own model with `benchmarks/run.py --graph-capture`. How
+it works is covered in
+[Graph-mode residual capture](../internals/vllm-adapter.md#graph-mode-residual-capture-experimental).
 
 [The vLLM adapter](../internals/vllm-adapter.md) explains how capture,
 position mapping and aborts work.
@@ -414,7 +455,7 @@ change in any minor release, so the range stops at the next one.
   best-effort for one more Undercurrent release, then it's dropped.
 
 !!! warning "GPU CI status"
-    There is no GPU CI for v0.1: the GPU tests run by hand before each release
+    There is no GPU CI for v0.2: the GPU tests run by hand before each release
     (`scripts/gpu_check.sh`). The vLLM rows on the
     [Compatibility](../compatibility.md#tested-combinations) page say which
     combinations have had a GPU run.
@@ -489,7 +530,8 @@ doesn't look (it checks `model.model.layers`, `model.layers` and
 
 **No probe results, or `aborted` is `False` although a probe asked to abort**
 
-Check that you passed `enforce_eager=True`, that the extraction point's
+Check that you passed `enforce_eager=True` (or, in graph mode, that the
+extraction point is a `residual_stream` at one of the `graph_capture_layers`), that the extraction point's
 `tensor_type` and `position` are captured on your model (see
 [Known limitations](../internals/vllm-adapter.md#known-limitations)), and
 that a class probe puts its `ABORT` signals in `signal_history` (see

@@ -432,7 +432,7 @@ engine core and each worker). Here's what the current code does on that route:
   requests registered through its `register_extraction` RPC, and only hands
   records over when someone calls `pop_pending_activations`.
   `VLLMEngineAdapter.generate()` makes those calls; a bare `vllm serve` process
-  has nothing that does. In Undercurrent v0.1 this route gives you a
+  has nothing that does. In Undercurrent v0.2 this route gives you a
   correctly configured engine with the extension loaded, but not end-to-end
   probing.
 
@@ -447,7 +447,7 @@ These all fail loudly unless the table says otherwise.
 | Limitation | Impact | Workaround | Tracked in |
 | --- | --- | --- | --- |
 | More than one worker (tensor or pipeline parallelism, Ray) isn't validated. | `load_model()` raises `VLLMAdapterLimitationError`. | `allow_unsupported_executor=True`. Results from all workers are merged and deduplicated, but this is unvalidated. | [Tensor & pipeline parallelism](vllm-parallelism.md) |
-| `residual_stream` needs to recognise the decoder layer's output: a single tensor, `(hidden_states, None)`, or a fused-residual `(hidden_states, residual)` pair of matching shape and dtype (captured as their sum). | Any other output (for example HunYuan's 3-tuple) raises `VLLMAdapterLimitationError` when a `residual_stream` extraction point fires on it. GPU verification of the fused-residual sum against the HF backend is pending `scripts/gpu_check.sh`. | Use `attn_out`, `mlp_out` or `final_norm`, or the HF backend, on such models. | [Compatibility](../compatibility.md#fixed-in-010-residual_stream-on-fused-residual-vllm-layers) |
+| `residual_stream` needs to recognise the decoder layer's output: a single tensor, `(hidden_states, None)`, or a fused-residual `(hidden_states, residual)` pair of matching shape and dtype (captured as their sum). | Any other output (for example HunYuan's 3-tuple) raises `VLLMAdapterLimitationError` when a `residual_stream` extraction point fires on it. The fused-residual sum is GPU-verified against the HF backend (`scripts/gpu_check.sh`). | Use `attn_out`, `mlp_out` or `final_norm`, or the HF backend, on such models. | [Compatibility](../compatibility.md#fixed-in-010-residual_stream-on-fused-residual-vllm-layers) |
 | `attn_out` is only hooked when the layer has a `self_attn` submodule. vLLM's GPT-2 implementation names it `attn`. | **Silent.** `attn_out` extraction points never fire on GPT-2-style models. | Use `residual_stream` or `mlp_out` on those models. | Future work |
 | Hook-based capture needs `enforce_eager=True`. The adapter doesn't set it. | With CUDA graphs, replayed steps run recorded GPU kernels without executing Python, so forward hooks can't fire during them. | Pass `enforce_eager=True` to `load_model()`, as the tests and examples do; or, for `residual_stream` only, use `graph_capture_layers=[...]` (experimental, see [Graph-mode residual capture](#graph-mode-residual-capture-experimental)). | Other tensor types: future work |
 | `tensor: kv` is rejected. The KV cache lives in paged blocks addressed through a slot mapping, not in a per-step tensor with one row per token. | `register_extraction` raises `WorkerExtractionError`. | Use `residual_stream`, `attn_out`, `mlp_out` or `final_norm`. | Future work |

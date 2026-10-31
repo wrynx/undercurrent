@@ -10,7 +10,7 @@ The vLLM source details below were checked against the vLLM version listed in
 
 ## Summary
 
-Multi-worker topologies are **not validated** in Undercurrent v0.1:
+Multi-worker topologies are **not validated** in Undercurrent v0.2:
 `VLLMEngineAdapter.load_model()` raises `VLLMAdapterLimitationError` when vLLM
 starts more than one worker, unless you pass `allow_unsupported_executor=True`.
 The capture side is sound for stock Llama-style models. Under TP, every rank's

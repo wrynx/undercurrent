@@ -18,16 +18,13 @@ how a release is cut.
 
 ## [Unreleased]
 
-### Fixed
+## [0.2.0] - 2026-10-31
 
-- vLLM adapter: with `OverflowPolicy.BLOCK` on the cross-process polling path,
-  async probes ran one at a time instead of in parallel. Each drained backlog
-  was routed one request at a time, so `route()` waited on one request's full
-  queue while every other request's worker sat idle. Drained records are now
-  interleaved round-robin across requests, keeping each request's forward-pass
-  order. On an A100 (Qwen2.5-7B, 16 requests, 76 ms probe) the old order made
-  `block` about 13x slower than the probe's own pace. The docs now also say
-  that on this path `block` delays results rather than slowing the engine.
+Performance and correctness work on the vLLM adapter, and experimental
+graph-mode `residual_stream` capture that keeps CUDA graphs and
+`torch.compile`. There are no breaking changes: code written for 0.1.0 runs
+unchanged.
+
 ### Added
 
 - vLLM adapter (experimental): graph-mode `residual_stream` capture.
@@ -62,8 +59,17 @@ how a release is cut.
   instead of once per hooked layer; the captured tensor is only extracted when
   something matched. Hook-path CPU time per step fell by about a third in a
   microbenchmark (16 requests x 8 probes, 28 layers).
+
 ### Fixed
 
+- vLLM adapter: with `OverflowPolicy.BLOCK` on the cross-process polling path,
+  async probes ran one at a time instead of in parallel. Each drained backlog
+  was routed one request at a time, so `route()` waited on one request's full
+  queue while every other request's worker sat idle. Drained records are now
+  interleaved round-robin across requests, keeping each request's forward-pass
+  order. On an A100 (Qwen2.5-7B, 16 requests, 76 ms probe) the old order made
+  `block` about 13x slower than the probe's own pace. The docs now also say
+  that on this path `block` delays results rather than slowing the engine.
 - vLLM adapter: activations could be silently dropped under concurrency on the
   polling path (engine core in a subprocess, the vLLM 0.28 default). One
   request's drain of the shared worker buffer could still be routing another
@@ -237,5 +243,6 @@ for details and workarounds.
   `state_dict`s, and refuses to load on torch older than 2.6 (the first
   release with a fix for CVE-2025-32434).
 
-[Unreleased]: https://github.com/wrynx/undercurrent/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/wrynx/undercurrent/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/wrynx/undercurrent/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/wrynx/undercurrent/releases/tag/v0.1.0
