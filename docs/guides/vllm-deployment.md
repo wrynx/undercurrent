@@ -409,9 +409,9 @@ Pass the decoder layers to capture as `graph_capture_layers`:
 with ProbedModel.from_pretrained(
     "Qwen/Qwen2.5-0.5B-Instruct",
     backend="vllm",
-    spec=SPEC,                     # residual_stream at layer 6 only
+    spec=SPEC,  # residual_stream at layer 6 only
     probes={"norm_gate": norm_gate},
-    graph_capture_layers=[6],      # instead of enforce_eager=True
+    graph_capture_layers=[6],  # instead of enforce_eager=True
 ) as model:
     outputs = model.generate(prompts, max_new_tokens=32)
 ```
