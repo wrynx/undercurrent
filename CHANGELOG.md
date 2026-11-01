@@ -18,7 +18,7 @@ how a release is cut.
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-10-31
+## [0.2.0] - 2026-11-01
 
 Performance and correctness work on the vLLM adapter, and experimental
 graph-mode `residual_stream` capture that keeps CUDA graphs and
