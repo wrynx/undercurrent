@@ -3,7 +3,7 @@
 <!-- owner: p3-concepts -->
 
 An **intervention** is an inline probe changing the course of generation. In
-v0.1 there is one intervention: **abort**. When an inline probe returns
+v0.2 there is one intervention: **abort**. When an inline probe returns
 `ProbeSignal(action=ProbeAction.ABORT)`, the engine adapter stops generating
 for that request. The router still finalizes every probe, so you get each
 probe's `ProbeResult` for the truncated generation.
