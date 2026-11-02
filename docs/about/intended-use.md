@@ -98,7 +98,7 @@ What the project does:
 What the project does not do:
 
 - It doesn't modify activations or weights. There is no steering, ablation or
-  "refusal removal" feature, and none is planned for v0.1.
+  "refusal removal" feature, and none is planned for v0.2.
 - It doesn't ship trained probes, jailbreaks or recipes for disabling a
   model's safeguards.
 - It doesn't give access to a model you couldn't already run.
@@ -133,4 +133,4 @@ would document a model (a "probe card"). At a minimum, include:
   Undercurrent and engine versions you tested with.
 
 Publishing pretrained probes on the Hugging Face Hub is on the roadmap. It is
-not part of v0.1.
+not part of v0.2.
