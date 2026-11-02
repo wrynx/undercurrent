@@ -38,10 +38,11 @@ Only combinations that have actually been run are listed here.
 | Python | torch | transformers | vllm | CUDA | Status |
 |--------|-------|--------------|------|------|--------|
 | 3.14.4 | 2.13.0 (`+cu130` build) | 5.16.1 | 0.28.0 | As provided by the vLLM wheel; no GPU present | **Tested locally**: full unit test suite, CPU only. GPU and real vLLM generation tests were skipped. |
+| 3.13.16 | 2.13.0 (`+cu130` build) | 5.21.0 | 0.28.0 | 13.0, NVIDIA L4 (driver 580.82.07) | **GPU-verified, 2026-11-01** (0.2.0, commit `5ded89e`): `scripts/gpu_check.sh` passed, covering every GPU test (vLLM integration, `ProbedModel` with the vLLM backend, and the `residual_stream` HF-vs-vLLM equivalence check) and the vLLM adapter suite against the real vLLM. Run on Google Colab. |
 | 3.13.15 | 2.13.0 (`+cu130` build) | 5.17.0 | 0.28.0 | 13.0, NVIDIA L4 (driver 580.82.07) | **GPU-verified, 2026-10-02**: `scripts/gpu_check.sh` passed, covering every GPU test (vLLM integration, `ProbedModel` with the vLLM backend, and the `residual_stream` HF-vs-vLLM equivalence check) and the vLLM adapter suite against the real vLLM. Run on Google Colab. |
 | 3.10.21 | 2.1.2 (`+cpu` build) | 4.40.2 | not installed | n/a | **The declared lower bounds** (with pydantic 2.0.3, PyYAML 6.0.3, numpy 1.23.5, packaging 22.0): CPU unit test suite passes locally. The CI `floors` job installs the same versions and runs the suite. Tests tied to newer releases skip themselves (the byte-for-byte JSON Schema comparisons need pydantic 2.11+; the content-safety demo needs torch 2.6+ to load checkpoints). |
 
-There is no GPU CI for v0.1. Instead, before every release a maintainer runs
+There is no GPU CI for v0.2. Instead, before every release a maintainer runs
 `scripts/gpu_check.sh` on a GPU machine with vLLM installed. It runs the GPU
 and real-vLLM tests and prints the combination it ran with, which is then
 added to the table above (see [RELEASING.md](https://github.com/wrynx/undercurrent/blob/main/RELEASING.md)).
@@ -104,11 +105,11 @@ torch 2.13.0+cu130) with `scripts/gpu_check.sh`.**
 
 ### No GPU CI for the vLLM adapter
 
-There is no GPU CI for v0.1. The GPU and real-vLLM tests run by hand: a
+There is no GPU CI for v0.2. The GPU and real-vLLM tests run by hand: a
 maintainer runs
 [`scripts/gpu_check.sh`](https://github.com/wrynx/undercurrent/blob/main/scripts/gpu_check.sh)
 on a GPU machine before each release, and the combination it ran with goes
-into [Tested combinations](#tested-combinations). For 0.1.0 that's an NVIDIA
+into [Tested combinations](#tested-combinations). For 0.2.0 that's an NVIDIA
 L4 with vLLM 0.28.0. Other GPUs, larger models and multi-GPU topologies
 haven't been run, and the vLLM adapter is still experimental. You can run the
 check on your own GPU machine too (see above).

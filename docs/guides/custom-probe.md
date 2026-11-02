@@ -623,7 +623,7 @@ and probes; see [Deploy with vLLM](vllm-deployment.md).
 ### Probes with trained weights
 
 A probe that runs a trained classifier needs its weights. There is no probe
-save/load API in v0.1. Load the weights yourself, with `safetensors`, which
+save/load API in v0.2. Load the weights yourself, with `safetensors`, which
 `transformers` already depends on. Loading a file on every `spawn` would add
 disk I/O to every request, so load once and share the read-only result, for
 example:
