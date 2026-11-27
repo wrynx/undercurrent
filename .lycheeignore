@@ -6,3 +6,8 @@
 
 # Placeholder hosts in examples (webhook sink URLs and similar).
 ^https?://([a-z0-9-]+\.)*example\.(com|org|net)([:/]|$)
+
+# SSRN answers automated clients with 403 Forbidden; doi.org/10.2139/ssrn.*
+# redirects there. Both links work in a browser (README citation section).
+^https?://(www\.)?(papers\.)?ssrn\.com/
+^https?://(dx\.)?doi\.org/10\.2139/ssrn\.
