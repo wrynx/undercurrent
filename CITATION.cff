@@ -5,7 +5,7 @@
 # `version` and `date-released` are not derived from git tags: update both by
 # hand in the release commit before tagging vX.Y.Z.
 cff-version: 1.2.0
-message: "If you use Undercurrent in your research or software, please cite it using the metadata from this file."
+message: "If you use Undercurrent in your research or software, please cite the Undercurrent paper (see preferred-citation)."
 type: software
 title: "Undercurrent"
 abstract: >-
@@ -35,3 +35,17 @@ keywords:
   - llm-inference
 version: "0.2.0"
 date-released: "2026-11-01"
+preferred-citation:
+  type: article
+  title: "Undercurrent: Production-grade Activation Probing for Live LLM Inference"
+  authors:
+    - family-names: "Khatri"
+      given-names: "Alizishaan"
+      affiliation: "Wrynx, Inc."
+  date-published: "2026-10-05"
+  year: 2026
+  month: 10
+  publisher:
+    name: "SSRN"
+  doi: "10.2139/ssrn.7723918"
+  url: "https://ssrn.com/abstract=7723918"

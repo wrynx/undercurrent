@@ -162,7 +162,26 @@ work is in the [roadmap](https://github.com/wrynx/undercurrent/blob/main/ROADMAP
 
 ## Citation
 
-If you use Undercurrent in research, please cite it using
+If you use Undercurrent in research, please cite the paper:
+
+> Khatri, Alizishaan. *Undercurrent: Production-grade Activation Probing for Live
+> LLM Inference* (October 05, 2026). Available at SSRN:
+> <https://ssrn.com/abstract=7723918> or <https://doi.org/10.2139/ssrn.7723918>
+
+```bibtex
+@article{khatri2026undercurrent,
+  title     = {Undercurrent: Production-grade Activation Probing for Live LLM Inference},
+  author    = {Khatri, Alizishaan},
+  year      = {2026},
+  month     = oct,
+  journal   = {SSRN Electronic Journal},
+  publisher = {SSRN},
+  doi       = {10.2139/ssrn.7723918},
+  url       = {https://ssrn.com/abstract=7723918}
+}
+```
+
+The same metadata is in
 [`CITATION.cff`](https://github.com/wrynx/undercurrent/blob/main/CITATION.cff)
 (GitHub's "Cite this repository" button reads it).
 
